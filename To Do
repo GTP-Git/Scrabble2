@@ -1,0 +1,162 @@
+To-Do List
+
+-- Get Save/Load working (works now when I load a saved game in my program, but not when I load into, say, Quackle
+
+-- When a game is loaded, the move replay is accurate, but the racks are simply simulated guesses, and do not reflect the actual racks. Because the Options button doesn't work in Replay mode because it conflicts with the replay controls, the user can't specify a rack to match the acutal game, if known.
+
+-- In 8-Letter Bingo mode, Play Again should play again without bringing up the Probability dialog. This interrupts the practice flow.
+
+-- In Replay mode, like Woogles does, show the best move that was available, the move the human played, the equity difference, and the running and total equity lost/gained.
+
+-- Need a way for the user to stop batch games and AI simulation process. Maybe add button to this effect. Need listeners for it.
+
+--Power Tiles game over dialog should have a Main button, and the Play Again button should re-runthe Power Tiles mode.
+
+-- Give option for Developer Tools on the Mode Selection screen, where options like Profile, etc. are shown
+
+-- Disable debug print for moves during Batch. No one is watching the batch, so no need to slow things down with printing
+
+-- Create a separate CONSTANTS.py file
+
+-- In batch game text file, break bingos played down into quartiles.
+
+-- Figure out how leave evaluation is done. Should we multiply the static value of a letter with it's probability of being drawn? And what about incorporating 2-leave synergies, with their corresponding probability of being drawn?
+
+
+
+
+
+
+
+-- Add more strategy heuristics
+
+  Board dynamics
+  Offense/Defense
+  Open/Closed
+  Leading/Trailing
+  Hot Spots
+
+
+-- Cursor focus should default to thh first text box in any dialog
+
+-- In Simulation return results, both in the console and in the dialog, show board coordinates.
+
+-- In Replay Mode, allow user to double-clcik a listed move and the board state will appear for that move.
+
+-- Racks should be alphabetized automatically, both human and AI, in every mode. This was working but broke
+
+-- How does the code evaluate exchanging? Does it check every possible combination of the letters on the rack, checking each against the leave table?
+
+-- Save Batch statistics to a Google Sheets. I asked Gemini about this and is easily implemented, but requires OAuth flow, etc. I already have account set up so just need to add sheet ID, etc.
+
+-- In Suggest and All Words, if bingo, show probablilty.
+
+-- Show difference between the predicted opponent average move and the actual opponent move. Collate those stats on the Batch stats file. And in the end-of-game stats.
+
+-- Allow different AI strengths. From best to worst:
+
+  1. My Strength Is Ten-Fold
+  2. I was National Champ in 1989. I Hardly Ever Think About It Anymore
+  3. I See You Play Scrabble. I Play A Little Scrabble Myself
+  4. DEI
+
+-- Allow user to specify simulation parameters per AI player, like how many words to consider, how many simulations per word., etc. Locate this within a submenu under Options.
+
+-- In at least somee game modes, allow the user to go back/forward during live games, like Quackle does. Use same Replay functionality and set-up that I have now. Great for endgame what-ifs.
+
+
+-- Refactor main(), as it's way to big and sprawling and likely very inefficient
+
+-- If type a word on the board and then click somewhere else on the board before backspacing, the letter stays on the board and my rack is not replenished, so remains <7 for the remainder of the game.
+
+-- Is there an automatic code testing library for Python?
+
+-- In Only Fives mode, the Suggest button should only show 5-letter words.
+
+-- Allow user to set up a board. I wonder: could the program take as input a photo of a Scrabble board and set the board up automatically for me? Mabye Grok/Gemini can take a photo of a Scrabble board, convert the pieces on the board to a text format, and then in my program I can either manually set the board up or just paste the text and the program will fill the board in automatically. It would need blank handling (so manual input for this) and the ability to deduce which tiles are still in the bag/on your opponent's rack.
+
+-- Add tool tips and contextual help. Set up in a separate file:
+# tooltip_data.py
+TOOLTIP_TEXTS = {
+    "sim_ai_candidates": "Number of top raw-scoring moves the AI considers before simulation.",
+    "sim_opp_sims": "How many random opponent racks are simulated for each AI candidate move.",
+    "sim_post_sim": "How many moves are evaluated with leave value after the simulation phase.",
+    # Add more tooltips here using unique keys
+}
+
+-- use cProfile (and snakeviz to visualize) where my program is slow and inefficient
+
+-- Get Endgame Solver working more efficiently. Will likely need to compile this function down to C. "C" below for details.
+
+
++__________+
+
+-- Refactor critical functions to C:
+
+Cython
+Cython is a superset of Python that allows adding C data types to Python code. It compiles to C code, which can then be compiled into a Python extension module. This is a popular choice for optimizing performance-critical sections of Python code. Maximum Speed: To get the absolute maximum speedup for something like the GADDAG traversal, you might eventually consider defining the GaddagNode itself as a C structure (cdef struct) or Cython extension type (cdef class), but this is a much more significant rewrite. Also consider cimport, saw in video, skips some pre-running checks and speeds up code even more.
+
+*******
+xcode-select --install (I installed this, not sure yet how to use it)
+xcode-select: note: install requested for command line developer tools
+*******
+
+CFFI (C Foreign Function Interface)
+CFFI provides a way to call C code from Python and vice versa. It focuses on interfacing with existing C libraries, rather than directly translating Python code. It requires writing C declarations that describe the functions and data structures in the C library.
+
+ctypes
+ctypes is a built-in Python library for interacting with C libraries. Similar to CFFI, it allows loading and calling functions from shared libraries. It's generally considered lower-level than CFFI, requiring more manual management of data types and memory.
+
+Shed Skin
+Shed Skin is an experimental compiler that translates a subset of Python code into C++. It requires that the Python code be statically typed (types must be inferable at compile time). It can generate standalone executables or extension modules.
+
+Numba
+Numba is a just-in-time compiler that translates Python functions into optimized machine code at runtime. While it doesn't produce C code directly, it can significantly speed up numerical computations, often achieving performance comparable to C. Numba is best suited for code that uses NumPy arrays and mathematical operations.
+
+It's also worth noting that tools like PyPy (an alternative Python implementation with a JIT compiler) and Nuitka (a compiler that translates Python to C or C++ and then compiles it) can also improve performance, although they don't provide C code as an output.
+
++__________+
+
+
+
+
+
+________________________________________________
+__________________    DONE    __________________
+________________________________________________
+
+-- Make length in Power Tiles mode 2-5 checked by default.
+
+-- Make Endgame Solver checkbox unchecked by default
+
+-- Bingo, Bango, Bongo bingo finding practice
+
+-- MCST (Monte Carlo Search Tree). Or, at least a 2-ply look-ahead simulation.
+
+-- Change exchange logic. Don't have a minimum score to activate, and don't require the exchange to be x points better. If it's better, it's better.
+
+-- On Batch statistics printout, within each individual game provide a working link that goes to the game in question. This means each game in a batch is saved automatically before going to the next. Edit: not a link, but the file name is saved in each game section.
+
+-- Allow for paste functionality in the Load Game text box
+
+-- Calculate how good a draw is, based on the tiles drawn compared to the tiles in the pool. This is the "luck" factor.
+
+-- Hint does the same thing as Suggest, so just remove it.
+
+-- Ability to specify a rack, like in Quackle, useful for study and repeatability
+
+-- Score Preview text encroaches on the Hint button.
+
+-- On the Mode Selection screen, the HVH mode button should not be the default selection. Since it is, clicking gives no feedback that it was clicked.
+
+-- Does Simulate This Move use the full simulation code? Ex, does it consider an exchange?
+
+-- Show Remaining Tiles as AAAA, BB, DD instead of A: 4, B: 2 D: 2
+
+-- The board should load before anything else, when a game/mode/practice is selected, otherwise while the computer things we have to stare at the Mode Selection screen.
+
+-- Get rid of the () after bingos in the dialogs. (This is not a bug, just signifies no rack leave)
+
+-- Play Again after 8-Letter Bingo should just run the game again, not go back to the Main screen.
+
+-- Remove debug print for rack tile movement
