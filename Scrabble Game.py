@@ -3,7 +3,7 @@
 
 
 #python
-#Scrabble 26APR25 Cython V1
+#Scrabble 26APR25 Cython V2
 
 
 # Part 1
@@ -172,6 +172,25 @@ ui_font = pygame.font.SysFont("Arial", 20)
 button_font = pygame.font.SysFont("Arial", 16)
 tile_count_font = pygame.font.SysFont("Arial", 14)
 dialog_font = pygame.font.SysFont("Arial", 24)
+
+TILE_LETTER_CACHE = {
+    'regular': {}, # For standard tiles (black text)
+    'blank': {}    # For blank tiles (white text)
+}
+
+print("Pre-rendering tile letters...")
+# Pre-render regular tile letters (A-Z)
+for i in range(26):
+    letter = chr(ord('A') + i)
+    # Render black text (True for anti-aliasing)
+    text_surf = font.render(letter, True, BLACK)
+    TILE_LETTER_CACHE['regular'][letter] = text_surf
+
+# Pre-render blank tile symbol (?) - white text
+blank_surf = font.render('?', True, WHITE)
+TILE_LETTER_CACHE['blank']['?'] = blank_surf
+print("Tile letter pre-rendering complete.")
+# --- END NEW ---
 
 
 # Global bag - initialized properly in main() or practice setup
@@ -695,65 +714,142 @@ def create_board():
     return board, labels, tiles
 
 # --- Drawing Functions ---
+
+
+# Function to Replace: draw_rack
+# REASON: Remove incorrect attempt to draw the dragged tile within this function.
+#         Drawing the dragged tile is handled in draw_game_screen.
+
 def draw_rack(player, rack, scores, turn, player_names, dragged_tile=None, drag_pos=None, display_scores=None):
-    """Draw a player's rack with tiles, scores, and buttons."""
-    global practice_mode # Access global practice_mode
+    """Draw a player's rack with tiles, scores, and buttons. Uses cached surfaces."""
+    global practice_mode, TILE_LETTER_CACHE # Access global practice_mode and cache
     if not rack: return None, None
     if display_scores is None: display_scores = scores
     if practice_mode == "eight_letter" and player == 2: return None, None # Don't draw P2 rack
 
     rack_width = 7 * (TILE_WIDTH + TILE_GAP) - TILE_GAP
-    # Calculate the rightmost extent of the replay buttons area
-    # Replay buttons start at x=10, width=50, gap=10. 4 buttons total.
     replay_area_end_x = 10 + 4 * (REPLAY_BUTTON_WIDTH + REPLAY_BUTTON_GAP) # 10 + 4*(50+10) = 250
-    # Minimum start x for the rack, considering replay buttons and star indicator offset (star is at start_x - 20)
     min_rack_start_x = replay_area_end_x + BUTTON_GAP + 20 # 250 + 10 + 20 = 280
-    # Try to center the rack, but ensure it starts after the minimum x to avoid overlap
     start_x = max(min_rack_start_x, (BOARD_SIZE - rack_width) // 2)
-
     rack_y = BOARD_SIZE + 80 if player == 1 else BOARD_SIZE + 150
 
     if turn == player and (practice_mode != "eight_letter" or player == 1): # Draw turn indicator
-        # Star indicator position depends on the calculated start_x
         center_x = start_x - 20; center_y = rack_y + TILE_HEIGHT // 2; radius = 10; points = []
         for i in range(10): angle = i * math.pi / 5; r = radius if i % 2 == 0 else radius / 2; x = center_x + r * math.cos(angle); y = center_y + r * math.sin(angle); points.append((x, y))
         pygame.draw.polygon(screen, TURN_INDICATOR_COLOR, points)
 
     for i, tile in enumerate(rack): # Draw tiles
         tile_x = start_x + i * (TILE_WIDTH + TILE_GAP)
-        if dragged_tile == (player, i) and drag_pos: continue
+        tile_rect = pygame.Rect(tile_x, rack_y, TILE_WIDTH, TILE_HEIGHT) # Define rect for centering
+
+        # --- MODIFICATION: Check if this tile is the one being dragged ---
+        # Check if a tile is being dragged, if it belongs to this player,
+        # and if its index matches the current loop index 'i'.
+        is_this_tile_dragged = (dragged_tile is not None and
+                                dragged_tile[0] == player and
+                                dragged_tile[1] == i)
+
+        # Skip drawing the tile placeholder if it's the one being dragged
+        if is_this_tile_dragged:
+             continue
+        # --- END MODIFICATION ---
+
+        # Draw the tile if it's not being dragged
         if tile == ' ':
-            center = (tile_x + TILE_WIDTH // 2, rack_y + TILE_HEIGHT // 2); radius = TILE_WIDTH // 2 - 2
-            pygame.draw.circle(screen, BLACK, center, radius); text = font.render('?', True, WHITE)
-            text_rect = text.get_rect(center=center); screen.blit(text, text_rect)
+            center = tile_rect.center; radius = TILE_WIDTH // 2 - 2
+            pygame.draw.circle(screen, BLACK, center, radius)
+            # --- Use Cache ---
+            text_surf = TILE_LETTER_CACHE['blank'].get('?')
+            if text_surf:
+                text_rect = text_surf.get_rect(center=center)
+                screen.blit(text_surf, text_rect)
+            # --- End Use Cache ---
         else:
-            pygame.draw.rect(screen, GREEN, (tile_x, rack_y, TILE_WIDTH, TILE_HEIGHT)); text = font.render(tile, True, BLACK)
-            screen.blit(text, (tile_x + 5, rack_y + 5))
+            pygame.draw.rect(screen, GREEN, tile_rect)
+            # --- Use Cache ---
+            text_surf = TILE_LETTER_CACHE['regular'].get(tile)
+            if text_surf:
+                # Center the cached surface within the tile rect
+                text_rect = text_surf.get_rect(center=tile_rect.center)
+                screen.blit(text_surf, text_rect)
+            # --- End Use Cache ---
 
-    if dragged_tile and dragged_tile[0] == player and drag_pos: # Draw dragged tile
-        tile_x, tile_y = drag_pos
-        if 0 <= dragged_tile[1] < len(rack):
-            tile = rack[dragged_tile[1]]
-            if tile == ' ':
-                center = (tile_x, tile_y); radius = TILE_WIDTH // 2 - 2; pygame.draw.circle(screen, BLACK, center, radius)
-                text = font.render('?', True, WHITE); text_rect = text.get_rect(center=center); screen.blit(text, text_rect)
-            else:
-                pygame.draw.rect(screen, GREEN, (tile_x - TILE_WIDTH // 2, tile_y - TILE_HEIGHT // 2, TILE_WIDTH, TILE_HEIGHT))
-                text = font.render(tile, True, BLACK); screen.blit(text, (tile_x - TILE_WIDTH // 2 + 5, tile_y - TILE_HEIGHT // 2 + 5))
+    # --- REMOVED the block that tried to draw the dragged tile here ---
+    # if dragged_tile and dragged_tile[0] == player and drag_pos: # Draw dragged tile
+    #    ... (removed code that caused NameError) ...
+    # --- END REMOVED ---
 
-    button_x = start_x + rack_width + BUTTON_GAP # Draw buttons
+    # Draw buttons (unchanged)
+    button_x = start_x + rack_width + BUTTON_GAP
     alpha_button_rect = pygame.draw.rect(screen, BUTTON_COLOR, (button_x, rack_y, BUTTON_WIDTH, BUTTON_HEIGHT))
     rand_button_rect = pygame.draw.rect(screen, BUTTON_COLOR, (button_x + BUTTON_WIDTH + BUTTON_GAP, rack_y, BUTTON_WIDTH, BUTTON_HEIGHT))
     alpha_text = button_font.render("Alphabetize", True, BLACK); alpha_rect = alpha_text.get_rect(center=alpha_button_rect.center); screen.blit(alpha_text, alpha_rect)
     rand_text = button_font.render("Randomize", True, BLACK); rand_rect = rand_text.get_rect(center=rand_button_rect.center); screen.blit(rand_text, rand_rect)
 
-    player_idx = player - 1 # Draw score
+    # Draw score (unchanged)
+    player_idx = player - 1
     if 0 <= player_idx < len(player_names) and 0 <= player_idx < len(display_scores):
         player_name_display = player_names[player_idx] if player_names[player_idx] else f"Player {player}"
         score_text = ui_font.render(f"{player_name_display} Score: {display_scores[player_idx]}", True, BLACK)
         screen.blit(score_text, (start_x, rack_y - 20))
     else: print(f"Warning: Invalid player index {player} for score display.")
     return alpha_button_rect, rand_button_rect
+
+
+
+
+# ADDED: Function to draw the Developer Tools dialog
+
+def draw_dev_tools_dialog(visualize_checked):
+    """
+    Draws the Developer Tools dialog box.
+
+    Args:
+        visualize_checked (bool): The current state of the "Visualize Batch Games" checkbox.
+
+    Returns:
+        tuple: (visualize_checkbox_rect, close_button_rect)
+    """
+    dialog_width, dialog_height = 350, 180 # Adjusted size
+    dialog_x = (WINDOW_WIDTH - dialog_width) // 2
+    dialog_y = (WINDOW_HEIGHT - dialog_height) // 2
+
+    # Draw dialog background and border
+    pygame.draw.rect(screen, DIALOG_COLOR, (dialog_x, dialog_y, dialog_width, dialog_height))
+    pygame.draw.rect(screen, BLACK, (dialog_x, dialog_y, dialog_width, dialog_height), 2)
+
+    # Title
+    title_text = dialog_font.render("Developer Tools", True, BLACK)
+    screen.blit(title_text, (dialog_x + 10, dialog_y + 10))
+
+    # Checkbox for Visualize Batch Games
+    checkbox_x = dialog_x + 20
+    checkbox_y = dialog_y + 60
+    visualize_checkbox_rect = pygame.Rect(checkbox_x, checkbox_y, 20, 20)
+    draw_checkbox(screen, checkbox_x, checkbox_y, visualize_checked)
+    label_text = ui_font.render("Visualize Batch Games", True, BLACK)
+    screen.blit(label_text, (checkbox_x + 30, checkbox_y + 2))
+
+    # Close Button
+    close_button_width = 80
+    close_button_rect = pygame.Rect(
+        dialog_x + (dialog_width - close_button_width) // 2, # Centered
+        dialog_y + dialog_height - BUTTON_HEIGHT - 15, # Near bottom
+        close_button_width,
+        BUTTON_HEIGHT
+    )
+    hover = close_button_rect.collidepoint(pygame.mouse.get_pos())
+    color = BUTTON_HOVER if hover else BUTTON_COLOR
+    pygame.draw.rect(screen, color, close_button_rect)
+    close_text = button_font.render("Close", True, BLACK)
+    screen.blit(close_text, close_text.get_rect(center=close_button_rect.center))
+
+    return visualize_checkbox_rect, close_button_rect
+
+
+
+
+
 
 def draw_replay_icon(screen, rect, icon_type):
     """Draw centered replay control icons (arrows) on the buttons."""
@@ -762,6 +858,9 @@ def draw_replay_icon(screen, rect, icon_type):
     elif icon_type == "prev": pygame.draw.polygon(screen, BLACK, [(center_x + 6, center_y - arrow_size), (center_x - 6, center_y), (center_x + 6, center_y + arrow_size)])
     elif icon_type == "next": pygame.draw.polygon(screen, BLACK, [(center_x - 6, center_y - arrow_size), (center_x + 6, center_y), (center_x - 6, center_y + arrow_size)])
     elif icon_type == "end": pygame.draw.polygon(screen, BLACK, [(center_x - 6, center_y - arrow_size), (center_x + 2, center_y), (center_x - 6, center_y + arrow_size)]); pygame.draw.polygon(screen, BLACK, [(center_x + 2, center_y - arrow_size), (center_x + 10, center_y), (center_x + 2, center_y + arrow_size)])
+
+
+
 
 def draw_scoreboard(screen, move_history, scroll_offset, scores, is_ai, player_names, final_scores=None, game_over_state=False): # Added player_names parameter
     """Draws the scrollable scoreboard using full player names."""
@@ -937,13 +1036,14 @@ def is_word_length_allowed(word_len, number_checks):
 
 
 
+# Function to Replace: mode_selection_screen
+# REASON: Add Developer Tools button, dialog handling, and visualize_batch setting.
+
 def mode_selection_screen():
-    """Display and handle the game mode selection screen, including Load Game via text input."""
+    """Display and handle the game mode selection screen, including Load Game via text input and Developer Tools."""
     print("--- mode_selection_screen() entered ---")
     global main_called
-    # Access pyperclip availability ---
     global pyperclip_available, pyperclip
-    
 
     try:
         print("--- mode_selection_screen(): Attempting to load background image... ---")
@@ -959,31 +1059,40 @@ def mode_selection_screen():
     number_checks = [True, True, True, True, False, False] # 2, 3, 4, 5, 6, 7+
     practice_state = None
     loaded_game_data = None
-    use_endgame_solver_checked = False # Default to not using the solver
-    use_ai_simulation_checked = False # Default to not using 2-ply simulation
+    use_endgame_solver_checked = False
+    use_ai_simulation_checked = False
 
     # State for Load Game Text Input
     showing_load_input = False; load_filename_input = ""; load_input_active = False
     load_confirm_button_rect = None; load_input_rect = None; load_cancel_button_rect = None
 
+    # --- NEW: Developer Tools State ---
+    showing_dev_tools_dialog = False
+    visualize_batch_checked = False # Default to False (unchecked)
+    dev_tools_visualize_rect = None # Rect for checkbox click detection
+    dev_tools_close_rect = None # Rect for close button click detection
+    # --- END NEW ---
+
     print("--- mode_selection_screen(): Entering main loop (while selected_mode is None:)... ---")
     loop_count = 0
     while selected_mode is None:
         loop_count += 1
-        #if loop_count % 15000 == 0: print(f"--- mode_selection_screen(): Loop iteration {loop_count} ---")
-
         pygame.event.pump()
 
         # --- Define positions INSIDE the loop ---
         option_rects = []
         name_rect_x = content_left + (content_width - 200) // 2
-        # REMOVED: p2_y_pos = 300 + 60 # Now calculated dynamically below
 
         # Button Positions (Bottom Row)
         play_later_rect = pygame.Rect(WINDOW_WIDTH - BUTTON_WIDTH - 10, WINDOW_HEIGHT - BUTTON_HEIGHT - 10, BUTTON_WIDTH, BUTTON_HEIGHT)
         load_game_button_rect = pygame.Rect(play_later_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
         batch_game_button_rect = pygame.Rect(load_game_button_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
         start_game_button_rect = pygame.Rect(batch_game_button_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
+        # --- NEW: Developer Tools Button Position ---
+        # Place it to the left of Start Game
+        dev_tools_button_width = 120 # Slightly wider for text
+        dev_tools_button_rect = pygame.Rect(start_game_button_rect.left - BUTTON_GAP - dev_tools_button_width, play_later_rect.top, dev_tools_button_width, BUTTON_HEIGHT)
+        # --- END NEW ---
 
 
         # Calculate Load Input Field/Button Positions unconditionally
@@ -1011,10 +1120,9 @@ def mode_selection_screen():
         simulation_label_x = simulation_checkbox_x + 25
         simulation_label_y = simulation_checkbox_y + 2
 
-        # --- Calculate Player Name Input Positions Dynamically ---
+        # Calculate Player Name Input Positions Dynamically
         name_input_gap = 30 # Gap below the last checkbox
         p1_y_pos = simulation_checkbox_y + simulation_checkbox_rect.height + name_input_gap
-
         player_name_gap = 40 # Gap between P1 and P2 inputs
         p2_y_pos = p1_y_pos + BUTTON_HEIGHT + player_name_gap # P2 position relative to P1
 
@@ -1038,9 +1146,31 @@ def mode_selection_screen():
         for event in pygame.event.get():
             if event.type == pygame.QUIT: pygame.quit(); sys.exit()
 
-            # Handle Load Game Input FIRST if active
+            # --- NEW: Handle Dev Tools Dialog FIRST ---
+            if showing_dev_tools_dialog:
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    x, y = event.pos
+                    # Checkbox click
+                    if dev_tools_visualize_rect and dev_tools_visualize_rect.collidepoint(x, y):
+                        visualize_batch_checked = not visualize_batch_checked
+                    # Close button click
+                    elif dev_tools_close_rect and dev_tools_close_rect.collidepoint(x, y):
+                        showing_dev_tools_dialog = False
+                    # Click outside dialog (optional: close dialog)
+                    # else:
+                    #    dialog_width, dialog_height = 350, 180
+                    #    dialog_rect = pygame.Rect((WINDOW_WIDTH - dialog_width) // 2, (WINDOW_HEIGHT - dialog_height) // 2, dialog_width, dialog_height)
+                    #    if not dialog_rect.collidepoint(x,y):
+                    #         showing_dev_tools_dialog = False
+                elif event.type == pygame.KEYDOWN:
+                     if event.key == pygame.K_ESCAPE: # Allow Esc to close
+                          showing_dev_tools_dialog = False
+                continue # Skip other event handling when dialog is open
+            # --- END NEW ---
+
+            # Handle Load Game Input if active
             if showing_load_input:
-                # [ ... Load game input handling ... ]
+                # [ ... Load game input handling ... ] (unchanged)
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     x, y = event.pos
                     if load_input_rect.collidepoint(x, y): load_input_active = True
@@ -1064,17 +1194,13 @@ def mode_selection_screen():
                     if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
                          if load_confirm_button_rect: pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {'pos': load_confirm_button_rect.center, 'button': 1}))
                     elif event.key == pygame.K_BACKSPACE: load_filename_input = load_filename_input[:-1]
-                    # --- PASTE LOGIC ---
                     elif event.key == pygame.K_v:
                         mods = pygame.key.get_mods()
-                        if (mods & pygame.KMOD_CTRL or mods & pygame.KMOD_META) and pyperclip_available: # Check Ctrl or Cmd
+                        if (mods & pygame.KMOD_CTRL or mods & pygame.KMOD_META) and pyperclip_available:
                             try:
                                 pasted_text = pyperclip.paste()
-                                if pasted_text: # Append only if clipboard has text
-                                    load_filename_input += pasted_text
-                            except Exception as e:
-                                print(f"Error pasting from clipboard: {e}") # Log error if paste fails
-                    # --- END PASTE LOGIC ---
+                                if pasted_text: load_filename_input += pasted_text
+                            except Exception as e: print(f"Error pasting from clipboard: {e}")
                     elif event.unicode.isprintable(): load_filename_input += event.unicode
                 continue # Skip rest of event handling
 
@@ -1082,7 +1208,7 @@ def mode_selection_screen():
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 x, y = event.pos
                 if showing_power_tiles_dialog: # Power Tiles Dialog ...
-                    # [ ... Power tiles dialog handling ... ]
+                    # [ ... Power tiles dialog handling ... ] (unchanged)
                     dialog_x = (WINDOW_WIDTH - 300) // 2; dialog_y = (WINDOW_HEIGHT - 250) // 2; letter_rects = [pygame.Rect(dialog_x + 20, dialog_y + 40 + i*30, 20, 20) for i in range(4)]; number_rects = [pygame.Rect(dialog_x + 150, dialog_y + 40 + i*30, 20, 20) for i in range(6)]
                     go_rect = pygame.Rect(dialog_x + 50, dialog_y + 220, 100, 30); cancel_rect = pygame.Rect(dialog_x + 160, dialog_y + 220, 100, 30)
                     for i, rect in enumerate(letter_rects):
@@ -1118,6 +1244,11 @@ def mode_selection_screen():
                     elif simulation_checkbox_rect.collidepoint(x, y):
                         use_ai_simulation_checked = not use_ai_simulation_checked
 
+                    # --- NEW: Handle Developer Tools Button Click ---
+                    elif dev_tools_button_rect.collidepoint(x, y):
+                        showing_dev_tools_dialog = True
+                    # --- END NEW ---
+
                     # Handle Batch Game Button Click
                     elif batch_game_button_rect.collidepoint(x, y):
                         print("--- mode_selection_screen(): Batch Games button clicked ---")
@@ -1129,8 +1260,9 @@ def mode_selection_screen():
                             if num_games is not None:
                                 print(f"--- mode_selection_screen(): Starting batch of {num_games} games ---")
                                 selected_mode = "BATCH_MODE"
-                                # Include the new checkbox state in the batch config data if needed later
-                                loaded_game_data = (current_selected_game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games)
+                                # --- MODIFICATION: Include visualize_batch_checked ---
+                                loaded_game_data = (current_selected_game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked)
+                                # --- END MODIFICATION ---
                                 break # Exit mode selection loop
                             else:
                                 print("--- mode_selection_screen(): Batch game setup cancelled ---")
@@ -1150,8 +1282,8 @@ def mode_selection_screen():
                     # Check Other Buttons
                     elif play_later_rect.collidepoint(x, y): print("--- mode_selection_screen(): Play Later clicked. Exiting. ---"); pygame.quit(); sys.exit()
                     else: # Handle name inputs, HVA selection, practice dropdown
+                        # ... (rest of name input, HVA, practice dropdown logic - unchanged) ...
                         clicked_name_input = False
-                        # Use dynamically calculated p1_y_pos and p2_y_pos here
                         p1_name_rect = pygame.Rect(name_rect_x, p1_y_pos, 200, BUTTON_HEIGHT)
                         p2_name_rect = pygame.Rect(name_rect_x, p2_y_pos, 200, BUTTON_HEIGHT) if modes[current_input] == MODE_HVH else None
 
@@ -1161,30 +1293,25 @@ def mode_selection_screen():
                         elif modes[current_input] == MODE_HVA: # HVA Name Input / Play As ...
                             if human_player == 1 and p1_name_rect.collidepoint(x, y): input_active = [True, False]; clicked_name_input = True
                             elif human_player == 2:
-                                # Use p2_y_pos for HVA P2 input box as well
                                 p2_name_rect_hva = pygame.Rect(name_rect_x, p2_y_pos, 200, BUTTON_HEIGHT)
                                 if p2_name_rect_hva.collidepoint(x,y): input_active = [False, True]; clicked_name_input = True
-                            # HVA buttons use hva_button_row_y which is relative to p2_y_pos
                             if p1_rect_hva.collidepoint(x, y):
                                 human_player = 1; player_names = ["Player 1", "AI"]; input_active = [True, False]
                             elif p2_rect_hva.collidepoint(x, y):
                                 human_player = 2; player_names = ["AI", "Player 2"]; input_active = [False, True]
 
                         if modes[current_input] == MODE_HVH: # Practice Dropdown ...
-                            # Use p2_y_pos for dropdown button position
                             dropdown_button_y = p2_y_pos + BUTTON_HEIGHT + 10
                             dropdown_rect = pygame.Rect(name_rect_x, dropdown_button_y, 200, 30)
                             if dropdown_rect.collidepoint(x, y): dropdown_open = not dropdown_open
                             elif dropdown_open:
                                 clicked_option = False
                                 current_options = ["Power Tiles", "8-Letter Bingos", "Bingo, Bango, Bongo", "Only Fives", "End Game"]
-                                for i, option_rect in enumerate(option_rects): # option_rects positions calculated earlier based on dropdown_button_y
+                                for i, option_rect in enumerate(option_rects):
                                     if option_rect.collidepoint(x, y):
                                         clicked_option = True; dropdown_open = False
                                         selected_practice_option = current_options[i]
-
-                                        if selected_practice_option == "Power Tiles":
-                                            showing_power_tiles_dialog = True
+                                        if selected_practice_option == "Power Tiles": showing_power_tiles_dialog = True
                                         elif selected_practice_option == "8-Letter Bingos":
                                             print("--- mode_selection_screen(): 8-Letter Bingo practice selected. Calling eight_letter_practice()... ---")
                                             proceed, p_board, p_tiles, p_racks, p_blanks, p_bag = eight_letter_practice()
@@ -1195,29 +1322,19 @@ def mode_selection_screen():
                                             else: print("--- mode_selection_screen(): 8-Letter practice setup cancelled or failed. ---")
                                         elif selected_practice_option == "Bingo, Bango, Bongo":
                                             print("--- mode_selection_screen(): Bingo, Bango, Bongo practice selected. ---")
-                                            practice_mode = "bingo_bango_bongo"
-                                            selected_mode = MODE_AVA # Set game mode to AI vs AI
-                                            player_names = ["AI 1", "AI 2"] # Set names accordingly
-                                            practice_state = None # Start a standard new game setup
+                                            practice_mode = "bingo_bango_bongo"; selected_mode = MODE_AVA; player_names = ["AI 1", "AI 2"]; practice_state = None
                                             print(f"--- mode_selection_screen(): Bingo, Bango, Bongo setup successful. Selected mode: {selected_mode} ---"); break
                                         elif selected_practice_option == "Only Fives":
                                             print("--- mode_selection_screen(): Only Fives practice selected. ---")
-                                            practice_mode = "only_fives"
-                                            selected_mode = MODE_HVA # Set game mode to Human vs AI
-                                            human_player = 1 # Default to human as Player 1
-                                            player_names = ["Player 1", "AI"] # Set names accordingly
-                                            practice_state = None # Start a standard new game setup
+                                            practice_mode = "only_fives"; selected_mode = MODE_HVA; human_player = 1; player_names = ["Player 1", "AI"]; practice_state = None
                                             print(f"--- mode_selection_screen(): Only Fives setup successful. Selected mode: {selected_mode} ---"); break
-                                        elif selected_practice_option == "End Game":
-                                            print("End Game practice selected - Not implemented yet")
-                                        break # Exit options loop
+                                        elif selected_practice_option == "End Game": print("End Game practice selected - Not implemented yet")
+                                        break
                                 if not clicked_option and not dropdown_rect.collidepoint(x,y): dropdown_open = False
                             elif not dropdown_rect.collidepoint(x,y): dropdown_open = False
 
-                        # Deactivate name input if clicking elsewhere
-                        dropdown_button_y_check = p2_y_pos + BUTTON_HEIGHT + 10 # Recalculate for check
+                        dropdown_button_y_check = p2_y_pos + BUTTON_HEIGHT + 10
                         dropdown_rect_check = pygame.Rect(name_rect_x, dropdown_button_y_check, 200, 30) if modes[current_input] == MODE_HVH else None
-                        # Add simulation_checkbox_rect to the list of things NOT to deactivate input for
                         if not clicked_name_input and not (dropdown_open and any(r.collidepoint(x,y) for r in option_rects)) and not p1_name_rect.collidepoint(x,y) and not (p2_name_rect and p2_name_rect.collidepoint(x,y)) and not (dropdown_rect_check and dropdown_rect_check.collidepoint(x,y)) and not endgame_checkbox_rect.collidepoint(x, y) and not simulation_checkbox_rect.collidepoint(x, y):
                             input_active = [False, False]
 
@@ -1271,6 +1388,15 @@ def mode_selection_screen():
         hover = start_game_button_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else BUTTON_COLOR; pygame.draw.rect(screen, color, start_game_button_rect)
         start_game_text = button_font.render("Start Game", True, BLACK); start_game_text_rect = start_game_text.get_rect(center=start_game_button_rect.center); screen.blit(start_game_text, start_game_text_rect)
 
+        # --- NEW: Draw Developer Tools Button ---
+        hover = dev_tools_button_rect.collidepoint(pygame.mouse.get_pos())
+        color = BUTTON_HOVER if hover else BUTTON_COLOR
+        pygame.draw.rect(screen, color, dev_tools_button_rect)
+        dev_tools_text = button_font.render("Developer Tools", True, BLACK)
+        dev_tools_text_rect = dev_tools_text.get_rect(center=dev_tools_button_rect.center)
+        screen.blit(dev_tools_text, dev_tools_text_rect)
+        # --- END NEW ---
+
 
         # Draw Load Game Input Field (if active)
         if showing_load_input:
@@ -1285,7 +1411,7 @@ def mode_selection_screen():
              pygame.draw.rect(screen, color, load_cancel_button_rect); text = button_font.render("Cancel", True, BLACK); text_rect = text.get_rect(center=load_cancel_button_rect.center); screen.blit(text, text_rect)
 
         # Name Input / Practice Dropdown / HVA Selection Drawing ...
-        # Use dynamically calculated p1_y_pos and p2_y_pos
+        # ... (rest of drawing logic for names, HVA, practice dropdown - unchanged) ...
         name_rect_width = 200;
         p1_label_text = "Player 1 Name:"; p1_label = ui_font.render(p1_label_text, True, BLACK);
         p1_name_rect = pygame.Rect(name_rect_x, p1_y_pos, name_rect_width, BUTTON_HEIGHT) # Define for drawing
@@ -1297,13 +1423,12 @@ def mode_selection_screen():
             p2_name_rect = pygame.Rect(name_rect_x, p2_y_pos, name_rect_width, BUTTON_HEIGHT) # Define for drawing
             p2_label_x = name_rect_x - p2_label.get_width() - 10; screen.blit(p2_label, (p2_label_x, p2_y_pos + 5))
             pygame.draw.rect(screen, WHITE if not input_active[1] else LIGHT_BLUE, p2_name_rect); pygame.draw.rect(screen, BLACK, p2_name_rect, 1); p2_name_text = ui_font.render(player_names[1], True, BLACK); screen.blit(p2_name_text, (p2_name_rect.x + 5, p2_name_rect.y + 5))
-            # Use p2_y_pos for dropdown button position
             dropdown_button_y = p2_y_pos + BUTTON_HEIGHT + 10
             dropdown_rect = pygame.Rect(name_rect_x, dropdown_button_y, 200, 30); hover = dropdown_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else BUTTON_COLOR; pygame.draw.rect(screen, color, dropdown_rect)
             text = button_font.render("Practice", True, BLACK); text_rect = text.get_rect(center=dropdown_rect.center); screen.blit(text, text_rect)
             if dropdown_open:
                 current_options = ["Power Tiles", "8-Letter Bingos", "Bingo, Bango, Bongo", "Only Fives", "End Game"]
-                for i, option_rect in enumerate(option_rects): # option_rects positions calculated earlier based on dropdown_button_y
+                for i, option_rect in enumerate(option_rects):
                      hover = option_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else DROPDOWN_COLOR; pygame.draw.rect(screen, color, option_rect);
                      text = button_font.render(current_options[i], True, BLACK); text_rect = text.get_rect(center=option_rect.center); screen.blit(text, text_rect)
         elif modes[current_input] == MODE_HVA:
@@ -1311,7 +1436,6 @@ def mode_selection_screen():
             p2_name_rect = pygame.Rect(name_rect_x, p2_y_pos, name_rect_width, BUTTON_HEIGHT) # Define for drawing
             p2_label_x = name_rect_x - p2_label.get_width() - 10; screen.blit(p2_label, (p2_label_x, p2_y_pos + 5))
             pygame.draw.rect(screen, GRAY, p2_name_rect); pygame.draw.rect(screen, BLACK, p2_name_rect, 1); p2_name_text = ui_font.render(player_names[1], True, BLACK); screen.blit(p2_name_text, (p2_name_rect.x + 5, p2_name_rect.y + 5))
-            # Draw HVA Play As buttons using pre-calculated rects (hva_button_row_y is relative to p2_y_pos)
             p1_hover = p1_rect_hva.collidepoint(pygame.mouse.get_pos()); p2_hover = p2_rect_hva.collidepoint(pygame.mouse.get_pos()); pygame.draw.rect(screen, BUTTON_HOVER if p1_hover else BUTTON_COLOR, p1_rect_hva);
             if human_player == 1: pygame.draw.rect(screen, BLACK, p1_rect_hva, 2)
             pygame.draw.rect(screen, BUTTON_HOVER if p2_hover else BUTTON_COLOR, p2_rect_hva);
@@ -1326,6 +1450,7 @@ def mode_selection_screen():
 
         # Draw Power Tiles Dialog if active ...
         if showing_power_tiles_dialog:
+            # ... (power tiles dialog drawing - unchanged) ...
             dialog_width, dialog_height = 300, 250; dialog_x = (WINDOW_WIDTH - dialog_width) // 2; dialog_y = (WINDOW_HEIGHT - dialog_height) // 2; pygame.draw.rect(screen, DIALOG_COLOR, (dialog_x, dialog_y, dialog_width, dialog_height)); pygame.draw.rect(screen, BLACK, (dialog_x, dialog_y, dialog_width, dialog_height), 2)
             title_text = dialog_font.render("Power Tiles Options", True, BLACK); screen.blit(title_text, (dialog_x + 10, dialog_y + 10)); letters = ['J', 'Q', 'X', 'Z']
             for i, letter in enumerate(letters): draw_checkbox(screen, dialog_x + 20, dialog_y + 40 + i*30, letter_checks[i]); text = ui_font.render(letter, True, BLACK); screen.blit(text, (dialog_x + 50, dialog_y + 40 + i*30))
@@ -1333,6 +1458,11 @@ def mode_selection_screen():
             for i, num in enumerate(numbers): draw_checkbox(screen, dialog_x + 150, dialog_y + 40 + i*30, number_checks[i]); text = ui_font.render(num, True, BLACK); screen.blit(text, (dialog_x + 180, dialog_y + 40 + i*30))
             go_rect = pygame.Rect(dialog_x + 50, dialog_y + 220, 100, 30); cancel_rect = pygame.Rect(dialog_x + 160, dialog_y + 220, 100, 30); pygame.draw.rect(screen, BUTTON_COLOR, go_rect); pygame.draw.rect(screen, BUTTON_COLOR, cancel_rect)
             go_text = button_font.render("Go", True, BLACK); cancel_text = button_font.render("Cancel", True, BLACK); screen.blit(go_text, go_text.get_rect(center=go_rect.center)); screen.blit(cancel_text, cancel_text.get_rect(center=cancel_rect.center))
+
+        # --- NEW: Draw Developer Tools Dialog ---
+        if showing_dev_tools_dialog:
+            dev_tools_visualize_rect, dev_tools_close_rect = draw_dev_tools_dialog(visualize_batch_checked)
+        # --- END NEW ---
 
 
         # --- Display Update ---
@@ -1346,12 +1476,14 @@ def mode_selection_screen():
     if selected_mode == "LOADED_GAME":
         return selected_mode, loaded_game_data
     elif selected_mode == "BATCH_MODE":
-        # Return the new checkbox state in the batch config tuple
-        return selected_mode, loaded_game_data # loaded_game_data holds batch config here
+        # --- MODIFICATION: Return visualize_batch_checked ---
+        return selected_mode, loaded_game_data # loaded_game_data already contains visualize_batch_checked
+        # --- END MODIFICATION ---
     else:
-        # Return both checkbox states
-        return selected_mode, (player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state)
-
+        # --- MODIFICATION: Return visualize_batch_checked (though not used here) ---
+        # Add visualize_batch_checked to the tuple for consistency, even if not used for non-batch modes
+        return selected_mode, (player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state, visualize_batch_checked)
+        # --- END MODIFICATION ---
 
 
 def draw_options_menu(turn, dropdown_open, bag_count):
@@ -2499,22 +2631,32 @@ _gaddag_traverse_cython(
 
 
 
+# Function to Replace: generate_all_moves_gaddag
+# REASON: Revert the addition of the dawg_root_node argument to _gaddag_traverse_cython
+#         to fix the TypeError caused by mismatch with the current Cython signature.
+
 def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
     """
     Generates ALL valid Scrabble moves using GADDAG traversal.
     Converts rack Counter to C array (using numpy.array with dtype=np.intc)
     before calling Cython.
     """
+    # Removed global DAWG access - assume DAWG is accessible if needed by cross_check
     global gaddag_loading_status
+    # Ensure DAWG is accessible for cross_check_sets calculation below if needed
+    # If DAWG is not loaded globally, this part might fail later.
+    # Consider passing DAWG as an argument if it's not reliably global.
     global DAWG
     from scrabble_helpers import get_anchor_points
     # Import the Cython function (assuming the import block exists near the top)
     # from gaddag_cython import _gaddag_traverse as _gaddag_traverse_cython
 
-    # Check GADDAG status (unchanged)
+    # Check GADDAG status
     if gaddag_loading_status != 'loaded' or gaddag_root is None:
-        # ... (error handling unchanged) ...
+        print("Error: GADDAG not loaded or has no root. Cannot generate moves.")
         return []
+    # Removed DAWG check - rely on cross_check logic below
+
 
     # Variable Initializations (unchanged)
     all_found_moves = []
@@ -2526,18 +2668,20 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
 
     # --- Convert Python rack Counter to C array using numpy.array ---
     rack_counts_py = Counter(rack)
-    # --- FIX: Use np.intc dtype ---
     rack_counts_c_arr = np.zeros(27, dtype=np.intc) # Use np.intc (platform C int)
-    # --- End Fix ---
     for i in range(26):
         letter = chr(ord('A') + i)
         rack_counts_c_arr[i] = rack_counts_py.get(letter, 0)
     rack_counts_c_arr[26] = rack_counts_py.get(' ', 0) # Index 26 for blank
     # --- End C array conversion ---
 
-    # Precompute Cross-Check Sets (unchanged)
+    # Precompute Cross-Check Sets (using the global DAWG object)
     cross_check_sets = {}
-    # ... (cross_check_sets calculation unchanged) ...
+    # --- Ensure DAWG is available for this block ---
+    if DAWG is None:
+        print("Error: DAWG object is None, cannot compute cross_check_sets.")
+        return [] # Cannot proceed without DAWG for cross-checks
+    # --- End DAWG check ---
     for r in range(GRID_SIZE):
         for c in range(GRID_SIZE):
             if not tiles[r][c]:
@@ -2550,6 +2694,7 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
                 if not up_word and not down_word: allowed_letters_v = set('ABCDEFGHIJKLMNOPQRSTUVWXYZ ')
                 else:
                     for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+                        # Uses global DAWG implicitly here
                         if DAWG.search(up_word + letter + down_word): allowed_letters_v.add(letter)
                     if allowed_letters_v: allowed_letters_v.add(' ')
 
@@ -2562,6 +2707,7 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
                 if not left_word and not right_word: allowed_letters_h = set('ABCDEFGHIJKLMNOPQRSTUVWXYZ ')
                 else:
                     for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+                         # Uses global DAWG implicitly here
                         if DAWG.search(left_word + letter + right_word): allowed_letters_h.add(letter)
                     if allowed_letters_h: allowed_letters_h.add(' ')
                 cross_check_sets[(r, c)] = {'V': allowed_letters_v, 'H': allowed_letters_h}
@@ -2569,8 +2715,8 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
 
     # --- Initiate Traversal using numpy array ---
     processed_adjacent_starts = set()
-    # --- Create a copy for Strategy 2 using numpy ---
     initial_rack_counts_c_copy = rack_counts_c_arr.copy() # numpy copy
+    # --- Removed dawg_root_node variable ---
 
     for r_anchor, c_anchor in anchors:
         anchor_pos = (r_anchor, c_anchor)
@@ -2582,38 +2728,38 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
             if count > 0 and tile_letter != ' ':
                 if tile_letter in gaddag_root.children:
                     next_node = gaddag_root.children[tile_letter]
-                    # --- Create a *copy* using numpy ---
                     next_rack_counts_c_arr_s1 = rack_counts_c_arr.copy() # numpy copy
                     letter_idx_s1 = ord(tile_letter) - ord('A')
                     next_rack_counts_c_arr_s1[letter_idx_s1] -= 1
-                    # --- End copy and decrement ---
                     initial_tiles = [(r_anchor, c_anchor, tile_letter, False, True)]
 
                     if tile_letter in allowed_v:
-                         # Pass the numpy array object
+                         # --- REVERTED CALL: Removed dawg_root_node ---
                          _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_s1, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles), True, 'H', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                         # --- END REVERT ---
 
                     if tile_letter in allowed_h:
-                         # Pass the same numpy array object
+                         # --- REVERTED CALL: Removed dawg_root_node ---
                          _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_s1, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles), True, 'V', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                         # --- END REVERT ---
 
         # Handle blank for Strategy 1
         if rack_counts_py[' '] > 0:
             if ' ' in allowed_h or ' ' in allowed_v:
-                # --- Create a *copy* using numpy ---
                 next_rack_counts_c_arr_blank = rack_counts_c_arr.copy() # numpy copy
                 next_rack_counts_c_arr_blank[26] -= 1
-                # --- End copy and decrement ---
                 for assigned_letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
                     if assigned_letter in gaddag_root.children:
                         next_node = gaddag_root.children[assigned_letter]
                         initial_tiles = [(r_anchor, c_anchor, assigned_letter, True, True)]
                         if ' ' in allowed_v:
-                            # Pass the numpy array object
+                            # --- REVERTED CALL: Removed dawg_root_node ---
                             _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_blank, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles), True, 'H', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                            # --- END REVERT ---
                         if ' ' in allowed_h:
-                            # Pass the same numpy array object
+                            # --- REVERTED CALL: Removed dawg_root_node ---
                             _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_blank, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles), True, 'V', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                            # --- END REVERT ---
 
         # --- Strategy 2 ---
         if not is_first_play:
@@ -2628,14 +2774,13 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
                             next_node = gaddag_root.children[existing_tile_letter]
                             initial_tiles = [(nr, nc, existing_tile_letter, False, False)]
                             start_axis = 'V' if dr != 0 else 'H'
-                            # --- Pass the UNMODIFIED numpy array copy ---
+                            # --- REVERTED CALL: Removed dawg_root_node ---
                             _gaddag_traverse_cython(anchor_pos, initial_rack_counts_c_copy, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles[:]), False, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
                             _gaddag_traverse_cython(anchor_pos, initial_rack_counts_c_copy, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles[:]), True, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
-                            # --- End Pass UNMODIFIED ---
+                            # --- END REVERT ---
 
     # Post-processing (unchanged)
     all_found_moves.sort(key=lambda m: m['score'], reverse=True)
-    # ... (rest of uniqueness check unchanged) ...
     final_unique_moves = []
     seen_final_signatures = set()
     for move in all_found_moves:
@@ -2644,7 +2789,17 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
              print(f"Warning: 'newly_placed' missing for move {move.get('word','?')}. Using 'positions'.")
              sig_details = move.get('positions', [])
         try:
-            sig_tuple_list = [tuple(item) for item in sig_details]
+            sig_tuple_list = []
+            valid_sig = True
+            for item in sig_details:
+                if isinstance(item, (list, tuple)) and len(item) == 3:
+                    sig_tuple_list.append(tuple(item))
+                else:
+                    print(f"Warning: Invalid item format in sig_details for move {move.get('word','?')}: {item}")
+                    valid_sig = False
+                    break
+            if not valid_sig:
+                continue
             sig_tuple = tuple(sorted(sig_tuple_list)) + (move['score'],)
         except TypeError as e:
              print(f"Warning: Could not create signature for move {move.get('word','?')}. Details: {sig_details}. Error: {e}")
@@ -5319,14 +5474,16 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
 
 
 
-# python
-# MODIFIED: Initialize board_tile_counts and populate if needed
+# Function to Replace: initialize_game
+# REASON: Unpack and store the visualize_batch setting for batch mode.
+
 def initialize_game(selected_mode_result, return_data, main_called_flag):
     """
     Initializes the game state based on the selected mode and data.
     Starts background GADDAG loading if not already loaded/loading.
     Returns the current GADDAG loading status along with other state variables.
     Initializes and populates board_tile_counts.
+    Unpacks visualize_batch setting for batch mode.
     """
     global GADDAG_STRUCTURE, gaddag_loading_status, gaddag_load_thread # Allow modification
 
@@ -5349,8 +5506,6 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
 
 
     # --- Initialize variables with defaults ---
-    # (Rest of the initialization logic remains the same as your provided code)
-    # ... (variable initializations: game_mode, is_loaded_game, etc.) ...
     game_mode = None
     is_loaded_game = False
     player_names = ["Player 1", "Player 2"]
@@ -5388,11 +5543,12 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
     last_played_highlight_coords = set()
     is_solving_endgame = False
     board_tile_counts = Counter() # Initialize the new counter
+    visualize_batch = False # Default visualize_batch setting
 
     # --- Game State Initialization based on selected mode ---
     print(f"--- initialize_game(): Starting game state initialization for mode: {selected_mode_result} ---")
-    # ... (mode-specific setup logic: LOADED_GAME, BATCH_MODE, Normal New Game) ...
     if selected_mode_result == "LOADED_GAME":
+        # ... (LOADED_GAME logic - unchanged) ...
         print("--- initialize_game(): Handling LOADED_GAME setup ---")
         game_mode = "LOADED_GAME"; is_loaded_game = True
         player_names, loaded_history, final_scores_loaded = return_data
@@ -5404,8 +5560,7 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
         number_checks = [True] * 6
         USE_ENDGAME_SOLVER = True
         USE_AI_SIMULATION = False
-        # Need to reconstruct board state to count tiles for loaded game
-        tiles_loaded, _, _, _ = simulate_game_up_to(0, move_history, replay_initial_shuffled_bag) # Get initial board
+        tiles_loaded, _, _, _ = simulate_game_up_to(0, move_history, replay_initial_shuffled_bag)
         for r in range(GRID_SIZE):
             for c in range(GRID_SIZE):
                 if tiles_loaded[r][c]:
@@ -5414,7 +5569,18 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
 
     elif selected_mode_result == "BATCH_MODE":
         is_batch_running = True
-        game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games = return_data
+        # --- MODIFICATION: Unpack visualize_batch_checked ---
+        try:
+            # Expect 7 items now
+            game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked = return_data
+            visualize_batch = visualize_batch_checked # Store the setting
+        except ValueError:
+            print("Error: Incorrect number of values unpacked for BATCH_MODE setup. Using defaults.")
+            # Handle error case - maybe default visualize_batch to False or True?
+            game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games = return_data # Unpack original 6
+            visualize_batch = False # Default if unpacking failed
+        # --- END MODIFICATION ---
+
         total_batch_games = num_games
         current_batch_game_num = 1
         batch_results = []
@@ -5438,11 +5604,14 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
         except OSError as e: print(f"Warning: Error listing directory for batch sequence number: {e}. Using sequence 1.")
         batch_base_filename_prefix = f"{batch_date_str}-{batch_time_str}-BATCH-{batch_seq_num}"
 
+        # --- MODIFICATION: Add visualize_batch to initial_game_config ---
         initial_game_config = {
             'game_mode': game_mode, 'player_names': player_names, 'human_player': human_player,
             'use_endgame_solver': USE_ENDGAME_SOLVER, 'use_ai_simulation': USE_AI_SIMULATION,
-            'batch_filename_prefix': batch_base_filename_prefix
+            'batch_filename_prefix': batch_base_filename_prefix,
+            'visualize_batch': visualize_batch # Store the setting here
         }
+        # --- END MODIFICATION ---
         is_ai = [False, False]
         if initial_game_config['game_mode'] == MODE_HVA: is_ai[2 - initial_game_config['human_player']] = True
         elif initial_game_config['game_mode'] == MODE_AVA: is_ai = [True, True]
@@ -5457,38 +5626,49 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
          move_history, pass_count, exchange_count, consecutive_zero_point_turns,
          last_played_highlight_coords, is_solving_endgame, board_tile_counts) = reset_result # Unpack counter
         initial_racks = [r[:] for r in racks]
-        print(f"--- initialize_game(): Batch Mode Setup Complete. Running {total_batch_games} games. Base Filename Prefix: {batch_base_filename_prefix} ---")
+        print(f"--- initialize_game(): Batch Mode Setup Complete. Running {total_batch_games} games. Visualize: {visualize_batch}. Base Filename Prefix: {batch_base_filename_prefix} ---")
 
-    elif selected_mode_result is not None:
+    elif selected_mode_result is not None: # Normal New Game or Practice
         print(f"--- initialize_game(): Handling New Game Setup ({selected_mode_result}) ---")
         game_mode = selected_mode_result; is_loaded_game = False; replay_initial_shuffled_bag = None
-        player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state = return_data
+        # --- MODIFICATION: Unpack visualize_batch (though unused here) ---
+        try:
+            # Expect 9 items now
+            player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state, visualize_batch_checked = return_data
+            # visualize_batch = visualize_batch_checked # Store if needed later
+        except ValueError:
+             print("Error: Incorrect number of values unpacked for New Game setup. Using defaults.")
+             player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state = return_data # Original 8
+             # visualize_batch = False # Default
+        # --- END MODIFICATION ---
+
         USE_ENDGAME_SOLVER = use_endgame_solver_checked
         USE_AI_SIMULATION = use_ai_simulation_checked
         print(f"--- initialize_game(): Use Endgame Solver set to: {USE_ENDGAME_SOLVER} ---")
         print(f"--- initialize_game(): Use AI Simulation set to: {USE_AI_SIMULATION} ---")
 
         if practice_state and practice_mode == "eight_letter":
+            # ... (8-letter practice setup - unchanged) ...
             print("Loading state from 8-letter practice...");
             board, tiles, racks, blanks, bag, scores, turn, first_play = practice_state["board"], practice_state["tiles"], practice_state["racks"], practice_state["blanks"], practice_state["bag"], practice_state["scores"], practice_state["turn"], practice_state["first_play"]; is_ai = [False, False];
-            # Count initial tiles for practice mode
             for r in range(GRID_SIZE):
                 for c in range(GRID_SIZE):
                     if tiles[r][c]:
                         board_tile_counts[tiles[r][c]] += 1
             print("--- initialize_game(): Loaded state from 8-letter practice. ---")
         elif practice_state: # Assuming other practice modes might also have initial state
+            # ... (Other practice setup - unchanged) ...
             print("Loading state from other practice mode...");
             board, tiles, racks, blanks, bag, scores, turn, first_play = practice_state["board"], practice_state["tiles"], practice_state["racks"], practice_state["blanks"], practice_state["bag"], practice_state["scores"], practice_state["turn"], practice_state["first_play"]; is_ai = [False, False];
             if game_mode == MODE_HVA: is_ai[2 - human_player] = True
             elif game_mode == MODE_AVA or practice_mode == "power_tiles" or practice_mode == "bingo_bango_bongo": is_ai = [True, True];
-            # Count initial tiles for practice mode
             for r in range(GRID_SIZE):
                 for c in range(GRID_SIZE):
                     if tiles[r][c]:
                         board_tile_counts[tiles[r][c]] += 1
             print(f"--- initialize_game(): Loaded state from other practice mode. is_ai: {is_ai} ---")
         else: # Standard new game
+            # ... (Standard new game setup - unchanged) ...
             print("Performing standard game initialization...");
             bag = create_standard_bag(); random.shuffle(bag); racks = [[], []]; scores = [0, 0]; turn = 1; blanks = set(); first_play = True
             board_tile_counts = Counter() # Ensure it's empty for standard start
@@ -5504,11 +5684,9 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
 
         initial_racks = [rack[:] for rack in racks]
 
-        # --- 8-Letter Practice Specific Initialization (Deferred Move Gen) ---
         if practice_mode == "eight_letter":
             print("--- initialize_game(): Performing 8-letter practice specific init (move gen deferred)... ---")
-            # We will generate moves later in the main loop once GADDAG is loaded
-            practice_target_moves = [] # Ensure it's empty initially
+            practice_target_moves = []
             practice_best_move = None
             all_moves = []
 
@@ -5518,7 +5696,7 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
         return None
 
     print("--- initialize_game(): Initialization complete. Returning state. ---")
-    # --- MODIFICATION: Add board_tile_counts to the return tuple ---
+    # --- MODIFICATION: Add visualize_batch to the return tuple ---
     return (game_mode, is_loaded_game, player_names, move_history, final_scores,
             replay_initial_shuffled_bag, board, tiles, scores, blanks, racks, bag,
             replay_mode, current_replay_turn, practice_mode, is_ai, human_player,
@@ -5528,7 +5706,10 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
             GADDAG_STRUCTURE, practice_target_moves, practice_best_move, all_moves,
             letter_checks, turn, pass_count, exchange_count, consecutive_zero_point_turns,
             last_played_highlight_coords, is_solving_endgame, gaddag_loading_status,
-            board_tile_counts) # Added counter here
+            board_tile_counts, visualize_batch) # Added visualize_batch here
+
+
+
 
 
 
@@ -6235,12 +6416,14 @@ def does_move_form_five_letter_word(move, current_tiles, current_blanks):
 
 
 # Function to Replace: process_game_events (Complete)
-# REASON: Call the imported Cython versions of is_valid_play and find_all_words_formed.
+# REASON: Add detailed debug prints before calling is_valid_play_cython
+#         to diagnose the "Invalid play" error.
 
 def process_game_events(state, drawn_rects): # Added drawn_rects parameter
     """
     Handles the main event loop, processing user input and system events.
     Calls Cython versions of helpers for typed play validation.
+    Includes debug prints for invalid play diagnosis.
     """
     # Unpack frequently used control flow flags for slightly cleaner access inside loop
     running_inner = state['running_inner']
@@ -6494,8 +6677,8 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                             if not state['is_ai'][state['turn']-1]: state['racks'][state['turn']-1].sort()
                             if (last_r, last_c) in state['blanks']: state['blanks'].remove((last_r, last_c))
                             current_r, current_c = last_r, last_c; state['current_r'], state['current_c'] = current_r, current_c
-                            if not state['word_positions']: state['typing'] = False; state['original_tiles'] = None; state['original_rack'] = None; current_r, current_c = None, None; typing_direction = None; typing_start = None; state['current_r'], state['current_c'] = None, None; state['typing_direction'] = None; state['typing_start'] = None
-                        else: state['typing'] = False; state['original_tiles'] = None; state['original_rack'] = None; current_r, current_c = None, None; typing_direction = None; typing_start = None; state['current_r'], state['current_c'] = None, None; state['typing_direction'] = None; state['typing_start'] = None
+                            if not state['word_positions']: state['typing'] = False; state['original_tiles'] = None; state['original_rack'] = None; current_r, current_c = None, None; typing_direction = None; typing_start = None; state['current_r'] = None; state['current_c'] = None; state['typing_direction'] = None; state['typing_start'] = None
+                        else: state['typing'] = False; state['original_tiles'] = None; state['original_rack'] = None; current_r, current_c = None, None; typing_direction = None; typing_start = None; state['current_r'] = None; state['current_c'] = None; state['typing_direction'] = None; state['typing_start'] = None
 
                     elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and state['typing']:
                         # Finalize the typed play
@@ -6509,6 +6692,12 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                             print(f"  First Play? {state['first_play']}")
                             print(f"  Initial Rack Size: {initial_rack_size_for_play}")
                             print(f"  Original Rack: {state['original_rack']}")
+                            # --- ADDED: Print original_tiles and current tiles ---
+                            print(f"  Original Tiles (at typing start):")
+                            # for r_idx, row_data in enumerate(state['original_tiles']): print(f"    {r_idx}: {''.join(t if t else '.' for t in row_data)}")
+                            print(f"  Current Tiles (with typed letters):")
+                            # for r_idx, row_data in enumerate(state['tiles']): print(f"    {r_idx}: {''.join(t if t else '.' for t in row_data)}")
+                            # --- END ADDED ---
                             print("  Calling is_valid_play_cython...") # Updated print message
                             # --- END DEBUG PRINTS ---
 
@@ -6720,17 +6909,19 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
 
 
 
-# python
-# MODIFIED: Unpack and pass exchange info to draw_hint_dialog
+# Function to Replace: draw_game_screen
+# REASON: Use pre-rendered surfaces from TILE_LETTER_CACHE for tile letters on the board.
+
 def draw_game_screen(screen, state):
     """
     Draws the entire game screen based on the current state.
     Prioritizes GADDAG loading message over batch progress message.
     Reads global GADDAG status directly for indicator display.
     Unpacks board_tile_counts and exchange hint info.
+    Uses cached surfaces for board tiles.
     """
     # --- Access global directly for indicator logic ---
-    global gaddag_loading_status
+    global gaddag_loading_status, TILE_LETTER_CACHE # Add cache access
 
     # --- Unpack State Variables Needed for Drawing ---
     # (Unpack all variables previously used directly in the main loop's drawing section)
@@ -6843,8 +7034,9 @@ def draw_game_screen(screen, state):
     for r in range(GRID_SIZE):
         for c in range(GRID_SIZE):
             # Draw square background
-            pygame.draw.rect(screen, board[r][c], (40 + c * SQUARE_SIZE, 40 + r * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE))
-            pygame.draw.rect(screen, BLACK, (40 + c * SQUARE_SIZE, 40 + r * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE), 1) # Border
+            square_rect = pygame.Rect(40 + c * SQUARE_SIZE, 40 + r * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE)
+            pygame.draw.rect(screen, board[r][c], square_rect)
+            pygame.draw.rect(screen, BLACK, square_rect, 1) # Border
 
             # Draw tile if present
             if tiles_to_display[r][c]:
@@ -6853,34 +7045,39 @@ def draw_game_screen(screen, state):
                 is_last_played = (r, c) in last_played_highlight_coords and not replay_mode # Highlight only in active game
                 tile_bg_color = PALE_YELLOW if is_last_played else GREEN
 
-                if is_blank_on_board:
-                    # Draw blank tile representation (circle inside square)
-                    center = (40 + c * SQUARE_SIZE + SQUARE_SIZE // 2, 40 + r * SQUARE_SIZE + SQUARE_SIZE // 2)
-                    radius = SQUARE_SIZE // 2 - 3
-                    # Draw background square first for consistency if highlighted
-                    tile_rect_bg = pygame.Rect(40 + c * SQUARE_SIZE + 2, 40 + r * SQUARE_SIZE + 2, SQUARE_SIZE - 4, SQUARE_SIZE - 4)
-                    pygame.draw.rect(screen, tile_bg_color, tile_rect_bg)
-                    # Draw black circle and letter
-                    pygame.draw.circle(screen, BLACK, center, radius)
-                    text_surf = font.render(tile_char, True, WHITE) # White letter on black circle
-                    text_rect = text_surf.get_rect(center=center)
-                    screen.blit(text_surf, text_rect)
-                else:
-                    # Draw regular tile
-                    tile_rect = pygame.Rect(40 + c * SQUARE_SIZE + 2, 40 + r * SQUARE_SIZE + 2, SQUARE_SIZE - 4, SQUARE_SIZE - 4)
-                    pygame.draw.rect(screen, tile_bg_color, tile_rect)
-                    text_surf = font.render(tile_char, True, BLACK)
-                    text_rect = text_surf.get_rect(center=tile_rect.center)
-                    screen.blit(text_surf, text_rect)
+                # Define tile content area (slightly smaller than square)
+                tile_rect = pygame.Rect(square_rect.left + 2, square_rect.top + 2, SQUARE_SIZE - 4, SQUARE_SIZE - 4)
 
-    # Highlight newly placed tiles in replay mode
+                if is_blank_on_board:
+                    # Draw background square first for consistency if highlighted
+                    pygame.draw.rect(screen, tile_bg_color, tile_rect)
+                    # Draw black circle
+                    center = tile_rect.center
+                    radius = SQUARE_SIZE // 2 - 3
+                    pygame.draw.circle(screen, BLACK, center, radius)
+                    # --- Use Cache for Blank Letter ---
+                    text_surf = TILE_LETTER_CACHE['blank'].get('?')
+                    if text_surf:
+                        text_rect = text_surf.get_rect(center=center)
+                        screen.blit(text_surf, text_rect)
+                    # --- End Use Cache ---
+                else:
+                    # Draw regular tile background
+                    pygame.draw.rect(screen, tile_bg_color, tile_rect)
+                    # --- Use Cache for Regular Letter ---
+                    text_surf = TILE_LETTER_CACHE['regular'].get(tile_char)
+                    if text_surf:
+                        text_rect = text_surf.get_rect(center=tile_rect.center)
+                        screen.blit(text_surf, text_rect)
+                    # --- End Use Cache ---
+
+    # Highlight newly placed tiles in replay mode (unchanged)
     if replay_mode and current_replay_turn > 0 and current_replay_turn <= len(move_history):
         last_move_data = move_history[current_replay_turn - 1]
         if last_move_data['move_type'] == 'place':
-            # Determine newly placed tiles by comparing with previous state
-            newly_placed_coords = last_move_data.get('newly_placed') # Use stored if available
-            if newly_placed_coords is None: # Fallback: Recalculate (might be slow)
-                original_replay_tiles = [['' for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)] # Default empty
+            newly_placed_coords = last_move_data.get('newly_placed')
+            if newly_placed_coords is None:
+                original_replay_tiles = [['' for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
                 try:
                     if is_loaded_game and replay_initial_shuffled_bag:
                         original_replay_tiles,_,_,_ = simulate_game_up_to(current_replay_turn - 1, move_history, replay_initial_shuffled_bag)
@@ -6888,22 +7085,19 @@ def draw_game_screen(screen, state):
                         original_replay_tiles,_,_,_ = get_replay_state(current_replay_turn - 1, initial_racks)
                 except Exception as e:
                     print(f"Error getting previous state for replay highlight: {e}")
-                # Compare positions in last move with original board state
                 newly_placed_coords = []
                 for p_r, p_c, p_l in last_move_data.get('positions', []):
                      if 0 <= p_r < GRID_SIZE and 0 <= p_c < GRID_SIZE and not original_replay_tiles[p_r][p_c]:
                           newly_placed_coords.append((p_r, p_c, p_l))
-
-            # Highlight the determined newly placed tiles
-            if newly_placed_coords: # Check if list is not empty
+            if newly_placed_coords:
                 for r, c, _ in newly_placed_coords:
-                    if 0 <= r < GRID_SIZE and 0 <= c < GRID_SIZE: # Bounds check
-                        pygame.draw.rect(screen, YELLOW, (40 + c * SQUARE_SIZE, 40 + r * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE), 3) # Highlight border
+                    if 0 <= r < GRID_SIZE and 0 <= c < GRID_SIZE:
+                        pygame.draw.rect(screen, YELLOW, (40 + c * SQUARE_SIZE, 40 + r * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE), 3)
 
-    # Draw Board Labels
+    # Draw Board Labels (unchanged)
     draw_board_labels(screen, ui_font)
 
-    # Draw Racks
+    # Draw Racks (uses cached surfaces via draw_rack)
     p1_alpha_rect, p1_rand_rect, p2_alpha_rect, p2_rand_rect = draw_player_racks(screen, racks_to_display, scores_to_display, turn_to_display, player_names, dragged_tile, drag_pos, practice_mode)
     drawn_rects['p1_alpha_rect'] = p1_alpha_rect
     drawn_rects['p1_rand_rect'] = p1_rand_rect
@@ -6911,52 +7105,44 @@ def draw_game_screen(screen, state):
     drawn_rects['p2_rand_rect'] = p2_rand_rect
 
 
-    # Draw Remaining Tiles (conditionally)
+    # Draw Remaining Tiles (conditionally - unchanged)
     if practice_mode != "eight_letter":
         current_player_index = turn_to_display - 1
-        # Ensure the index is valid before accessing racks_to_display
         if 0 <= current_player_index < len(racks_to_display):
-            # --- MODIFICATION: Pass board_tile_counts ---
-            # Need the *current* board counts for the active game state
-            current_board_counts = state['board_tile_counts'] if not replay_mode else Counter() # Use empty for replay for now
+            current_board_counts = state['board_tile_counts'] if not replay_mode else Counter()
             remaining = get_remaining_tiles(racks_to_display[current_player_index], current_board_counts)
-            # --- END MODIFICATION ---
             draw_remaining_tiles(remaining, turn_to_display)
         else:
-            # Handle cases where rack might not exist (e.g., during initialization issues)
-            draw_remaining_tiles({}, turn_to_display) # Draw empty
+            draw_remaining_tiles({}, turn_to_display)
 
-    # Draw Scoreboard
+    # Draw Scoreboard (unchanged)
     history_to_draw = move_history[:current_replay_turn] if replay_mode else move_history
     is_final_turn_in_replay = replay_mode and current_replay_turn == len(move_history)
-    # Calculate scoreboard position dynamically
     sb_x = BOARD_SIZE + 275
     sb_y = 40
-    sb_w = max(200, WINDOW_WIDTH - sb_x - 20) # Use scoreboard_x in calculation
+    sb_w = max(200, WINDOW_WIDTH - sb_x - 20)
     sb_h = WINDOW_HEIGHT - 80
     if sb_x + sb_w > WINDOW_WIDTH - 10: sb_w = WINDOW_WIDTH - sb_x - 10
-    if sb_w < 150: sb_x = WINDOW_WIDTH - 160; sb_w = 150 # Adjust position too
+    if sb_w < 150: sb_x = WINDOW_WIDTH - 160; sb_w = 150
     draw_scoreboard(screen, history_to_draw, scroll_offset, scores_to_display, is_ai, player_names, final_scores=final_scores, game_over_state=game_over_state or is_final_turn_in_replay)
 
-    # Draw Typing Cursor / Selection Arrow
+    # Draw Typing Cursor / Selection Arrow (unchanged)
     if selected_square and not typing:
         draw_arrow(selected_square[0], selected_square[1], selected_square[2])
     elif typing:
         if current_r is not None and current_c is not None:
             cursor_x = 40 + current_c * SQUARE_SIZE + SQUARE_SIZE // 2
             cursor_y = 40 + current_r * SQUARE_SIZE + SQUARE_SIZE - 5
-            # Draw cursor only if coordinates are valid and blinking
             if int(time.time() * 2) % 2 == 0:
                 pygame.draw.line(screen, BLACK, (cursor_x - 5, cursor_y), (cursor_x + 5, cursor_y), 2)
 
-    # Draw UI Buttons (Suggest, Simulate, Preview) - Conditionally
+    # Draw UI Buttons (Suggest, Simulate, Preview) - Conditionally (unchanged)
     suggest_rect_base = None
     simulate_button_rect = None
     preview_checkbox_rect = None
     if not replay_mode and not game_over_state and not is_batch_running:
         suggest_rect_base = draw_suggest_button()
         if suggest_rect_base:
-            # Position Simulate button below Suggest
             simulate_button_rect = pygame.Rect(suggest_rect_base.x, suggest_rect_base.bottom + BUTTON_GAP, OPTIONS_WIDTH, OPTIONS_HEIGHT)
             hover = simulate_button_rect.collidepoint(pygame.mouse.get_pos())
             color = BUTTON_HOVER if hover else BUTTON_COLOR
@@ -6965,20 +7151,17 @@ def draw_game_screen(screen, state):
             simulate_text_rect = simulate_text.get_rect(center=simulate_button_rect.center)
             screen.blit(simulate_text, simulate_text_rect)
         else:
-            simulate_button_rect = None # Ensure it's None if suggest isn't drawn
+            simulate_button_rect = None
 
-        # Draw Preview Checkbox (only if human turn or paused practice)
         is_human_turn_or_paused_practice = not is_ai[turn-1] or paused_for_power_tile or paused_for_bingo_practice
         if is_human_turn_or_paused_practice:
-            # Position relative to the player's randomize button
             relevant_rand_rect = p1_rand_rect if turn == 1 else p2_rand_rect
-            if relevant_rand_rect: # Check if the button rect exists
+            if relevant_rand_rect:
                 preview_checkbox_height = 20
                 checkbox_x = relevant_rand_rect.left
-                checkbox_y = relevant_rand_rect.top - preview_checkbox_height - BUTTON_GAP # Position above
+                checkbox_y = relevant_rand_rect.top - preview_checkbox_height - BUTTON_GAP
                 preview_checkbox_rect = pygame.Rect(checkbox_x, checkbox_y, 20, preview_checkbox_height)
                 draw_checkbox(screen, checkbox_x, checkbox_y, preview_score_enabled)
-                # Draw label and score
                 label_text = "Score Preview: "
                 label_surf = ui_font.render(label_text, True, BLACK)
                 label_x = checkbox_x + 25
@@ -6991,36 +7174,29 @@ def draw_game_screen(screen, state):
                     score_y = label_y
                     screen.blit(score_surf, (score_x, score_y))
             else:
-                preview_checkbox_rect = None # Button wasn't drawn, so checkbox can't be positioned
+                preview_checkbox_rect = None
         else:
-             preview_checkbox_rect = None # Not human turn/paused
+             preview_checkbox_rect = None
 
     drawn_rects['suggest_rect_base'] = suggest_rect_base
     drawn_rects['simulate_button_rect'] = simulate_button_rect
     drawn_rects['preview_checkbox_rect'] = preview_checkbox_rect
 
-    # Draw Indicators (Endgame Solving, Batch Mode, GADDAG Loading)
+    # Draw Indicators (Endgame Solving, Batch Mode, GADDAG Loading) (unchanged)
     if is_solving_endgame:
         draw_endgame_solving_indicator()
-
-    # --- Indicator Logic: Prioritize Loading, then Batch ---
-    # *** MODIFICATION: Check GLOBAL status directly ***
     if gaddag_loading_status == 'loading':
-        # Draw GADDAG loading indicator (uses scoreboard position)
         draw_loading_indicator(sb_x, sb_y, sb_w)
-    elif is_batch_running: # Only draw batch if NOT loading
+    elif is_batch_running:
         batch_text = f"Running Game: {current_batch_game_num} / {total_batch_games}"
         batch_surf = ui_font.render(batch_text, True, BLUE)
-        # Position above scoreboard
         indicator_center_x = sb_x + sb_w // 2
-        indicator_top_y = sb_y - batch_surf.get_height() - 5 # 5px padding above scoreboard
-        batch_rect = batch_surf.get_rect(centerx=indicator_center_x, top=max(5, indicator_top_y)) # Ensure not off top
+        indicator_top_y = sb_y - batch_surf.get_height() - 5
+        batch_rect = batch_surf.get_rect(centerx=indicator_center_x, top=max(5, indicator_top_y))
         screen.blit(batch_surf, batch_rect)
-    # --- End Indicator Logic ---
 
 
-    # --- Draw Dialogs (if active) ---
-    # Initialize dialog rects to None
+    # --- Draw Dialogs (if active) --- (unchanged logic, uses cached surfaces via draw_rack/draw_hint etc.)
     drawn_rects.update({
         'sim_input_rects': [], 'sim_simulate_rect': None, 'sim_cancel_rect': None,
         'p1_input_rect_sr': None, 'p2_input_rect_sr': None, 'p1_reset_rect_sr': None,
@@ -7060,25 +7236,22 @@ def draw_game_screen(screen, state):
         drawn_rects['cancel_button_rect'] = cancel_button_rect
     elif hinting:
         is_simulation_result = bool(hint_moves and isinstance(hint_moves[0], dict) and 'final_score' in hint_moves[0])
-        # --- MODIFICATION: Pass exchange info ---
         hint_rects, play_button_rect, ok_button_rect, all_words_button_rect = draw_hint_dialog(
             hint_moves,
             selected_hint_index,
             is_simulation_result=is_simulation_result,
-            best_exchange_tiles=best_exchange_for_hint, # Pass unpacked variable
-            best_exchange_score=best_exchange_score_for_hint # Pass unpacked variable
+            best_exchange_tiles=best_exchange_for_hint,
+            best_exchange_score=best_exchange_score_for_hint
         )
-        # --- END MODIFICATION ---
         drawn_rects['hint_rects'] = hint_rects
         drawn_rects['play_button_rect'] = play_button_rect
         drawn_rects['ok_button_rect'] = ok_button_rect
         drawn_rects['all_words_button_rect'] = all_words_button_rect
     elif showing_all_words:
-        # Determine which moves to show based on practice mode
         if practice_mode == "eight_letter": moves_for_all = practice_target_moves
         elif practice_mode == "power_tiles" and paused_for_power_tile: moves_for_all = sorted([m for m in all_moves if any(letter == current_power_tile for _, _, letter in m.get('newly_placed',[])) and is_word_length_allowed(len(m.get('word','')), number_checks)], key=lambda m: m['score'], reverse=True)
         elif practice_mode == "bingo_bango_bongo" and paused_for_bingo_practice: moves_for_all = sorted([m for m in all_moves if m.get('is_bingo', False)], key=lambda m: m['score'], reverse=True)
-        else: moves_for_all = all_moves # Use the main all_moves list
+        else: moves_for_all = all_moves
         all_words_rects, all_words_play_rect, all_words_ok_rect = draw_all_words_dialog(moves_for_all, selected_hint_index, all_words_scroll_offset)
         drawn_rects['all_words_rects'] = all_words_rects
         drawn_rects['all_words_play_rect'] = all_words_play_rect
@@ -7089,7 +7262,7 @@ def draw_game_screen(screen, state):
         drawn_rects['practice_main_menu_rect'] = practice_main_menu_rect
         drawn_rects['practice_quit_rect'] = practice_quit_rect
 
-    # Draw Game Over / Replay Controls / Options Menu
+    # Draw Game Over / Replay Controls / Options Menu (unchanged)
     if game_over_state and not is_batch_running:
         if final_scores is not None:
             save_rect, quit_rect, replay_rect, play_again_rect, stats_rect = draw_game_over_dialog(dialog_x, dialog_y, final_scores, reason, player_names)
@@ -7099,18 +7272,14 @@ def draw_game_screen(screen, state):
             drawn_rects['play_again_rect'] = play_again_rect
             drawn_rects['stats_rect'] = stats_rect
         if showing_stats and final_scores:
-            # Pass board_tile_counts to stats dialog if needed, or calculate inside
-            # For now, assume stats dialog calculates its own counts if needed
             stats_ok_button_rect, stats_total_content_height = draw_stats_dialog(stats_dialog_x, stats_dialog_y, player_names, final_scores, tiles, stats_scroll_offset)
             drawn_rects['stats_ok_button_rect'] = stats_ok_button_rect
-            drawn_rects['stats_total_content_height'] = stats_total_content_height # Store for main loop
-        # Draw options menu even when game over dialog is shown
+            drawn_rects['stats_total_content_height'] = stats_total_content_height
         options_rect_base, dropdown_rects_base = draw_options_menu(turn_to_display, dropdown_open, bag_count)
         drawn_rects['options_rect_base'] = options_rect_base
         drawn_rects['dropdown_rects_base'] = dropdown_rects_base
     elif replay_mode:
-        # Draw replay buttons
-        replay_start_rect = state['replay_start_rect'] # Get from state
+        replay_start_rect = state['replay_start_rect']
         replay_prev_rect = state['replay_prev_rect']
         replay_next_rect = state['replay_next_rect']
         replay_end_rect = state['replay_end_rect']
@@ -7120,7 +7289,6 @@ def draw_game_screen(screen, state):
             color = BUTTON_HOVER if hover else BUTTON_COLOR
             pygame.draw.rect(screen, color, rect)
             draw_replay_icon(screen, rect, icon_type)
-        # Draw options menu
         options_rect_base, dropdown_rects_base = draw_options_menu(turn_to_display, dropdown_open, bag_count)
         drawn_rects['options_rect_base'] = options_rect_base
         drawn_rects['dropdown_rects_base'] = dropdown_rects_base
@@ -7129,31 +7297,33 @@ def draw_game_screen(screen, state):
         drawn_rects['options_rect_base'] = options_rect_base
         drawn_rects['dropdown_rects_base'] = dropdown_rects_base
 
-    # Draw Dragged Tile Last (on top of everything else)
+    # Draw Dragged Tile Last (uses cached surfaces via draw_rack) (unchanged logic)
     if dragged_tile and drag_pos:
         player_idx_drag = dragged_tile[0]-1
         tile_val = None
-        # Use the correct rack source depending on mode
         current_racks_for_drag = racks_to_display if replay_mode else racks
         if 0 <= player_idx_drag < len(current_racks_for_drag) and 0 <= dragged_tile[1] < len(current_racks_for_drag[player_idx_drag]):
             tile_val = current_racks_for_drag[player_idx_drag][dragged_tile[1]]
 
-        if tile_val: # Only draw if tile value is valid
-            # Calculate draw position based on mouse and offset
-            draw_x = drag_pos[0] - (TILE_WIDTH // 2) - drag_offset[0]
-            draw_y = drag_pos[1] - (TILE_HEIGHT // 2) - drag_offset[1]
+        if tile_val:
+            center_x = drag_pos[0] - drag_offset[0]
+            center_y = drag_pos[1] - drag_offset[1]
+            draw_x = center_x - TILE_WIDTH // 2
+            draw_y = center_y - TILE_HEIGHT // 2
 
-            if tile_val == ' ': # Draw blank tile representation
-                center = (drag_pos[0] - drag_offset[0], drag_pos[1] - drag_offset[1])
+            if tile_val == ' ':
                 radius = TILE_WIDTH // 2 - 2
-                pygame.draw.circle(screen, BLACK, center, radius)
-                text = font.render('?', True, WHITE)
-                text_rect = text.get_rect(center=center)
-                screen.blit(text, text_rect)
-            else: # Draw regular tile
+                pygame.draw.circle(screen, BLACK, (center_x, center_y), radius)
+                text_surf = TILE_LETTER_CACHE['blank'].get('?')
+                if text_surf:
+                    text_rect = text_surf.get_rect(center=(center_x, center_y))
+                    screen.blit(text_surf, text_rect)
+            else:
                 pygame.draw.rect(screen, GREEN, (draw_x, draw_y, TILE_WIDTH, TILE_HEIGHT))
-                text = font.render(tile_val, True, BLACK)
-                screen.blit(text, (draw_x + 5, draw_y + 5))
+                text_surf = TILE_LETTER_CACHE['regular'].get(tile_val)
+                if text_surf:
+                    text_rect = text_surf.get_rect(center=(center_x, center_y))
+                    screen.blit(text_surf, text_rect)
 
     return drawn_rects
    
@@ -7264,12 +7434,14 @@ def check_and_handle_game_over(state):
 
 
 
-# python
+# Function to Replace: handle_turn_start_updates
+# REASON: Skip redundant pool quality calculation and move generation during batch mode.
+
 def handle_turn_start_updates(state):
     """
     Handles updates needed at the start of a new turn:
-    - Calculates pool quality score using the optimized get_remaining_tiles.
-    - Generates moves for the current player (if applicable).
+    - Calculates pool quality score (skipped in batch).
+    - Generates moves for the current player (skipped in batch).
     - Resets turn-specific flags.
     - Updates previous_turn.
 
@@ -7286,8 +7458,6 @@ def handle_turn_start_updates(state):
     game_over_state = state['game_over_state']
     is_solving_endgame = state['is_solving_endgame']
     racks = state['racks']
-    # tiles = state['tiles'] # No longer needed directly here
-    # blanks = state['blanks'] # No longer needed directly here
     board_tile_counts = state['board_tile_counts'] # Unpack the counter
     practice_mode = state['practice_mode']
     paused_for_power_tile = state['paused_for_power_tile']
@@ -7297,8 +7467,9 @@ def handle_turn_start_updates(state):
     board = state['board']
     is_ai = state['is_ai']
     player_names = state['player_names']
+    is_batch_running = state.get('is_batch_running', False) # Get batch status
 
-    # Default values for outputs
+    # Default values for outputs (read from input state)
     current_turn_pool_quality_score = state.get('current_turn_pool_quality_score', 0.0)
     all_moves = state.get('all_moves', [])
     human_played = state.get('human_played', False)
@@ -7307,35 +7478,44 @@ def handle_turn_start_updates(state):
 
     if turn != previous_turn and not replay_mode and not game_over_state:
         if not is_solving_endgame:
-            # Calculate pool quality score
-            if racks and len(racks) > turn - 1 and racks[turn - 1] is not None:
-                # --- MODIFICATION: Use board_tile_counts ---
-                temp_remaining_tiles = get_remaining_tiles(racks[turn - 1], board_tile_counts)
-                # --- END MODIFICATION ---
-                temp_pool_analysis = analyze_unseen_pool(temp_remaining_tiles)
-                current_turn_pool_quality_score = temp_pool_analysis.get('quality_score', 0.0)
-            else:
-                current_turn_pool_quality_score = 0.0
 
-            # Generate moves (if not practice mode needing deferred gen, and GADDAG ready)
-            if practice_mode != "eight_letter" and not paused_for_power_tile and not paused_for_bingo_practice:
-                if gaddag_loading_status == 'loaded' and GADDAG_STRUCTURE:
-                    if racks and len(racks) > turn - 1 and racks[turn - 1] is not None:
-                        # Pass blanks correctly here as generate_all_moves still needs it
-                        all_moves = generate_all_moves_gaddag(racks[turn - 1], state['tiles'], board, state['blanks'], GADDAG_STRUCTURE.root)
-                        if all_moves is None:
-                            all_moves = []
-                    else:
-                        all_moves = [] # Handle case where rack might be invalid
-                elif gaddag_loading_status == 'idle' or gaddag_loading_status == 'loading':
-                    all_moves = [] # GADDAG not ready
-                else: # Error state
-                    all_moves = []
+            # --- MODIFICATION START: Conditional Calculation/Generation ---
+            if not is_batch_running: # Only do these if NOT in batch mode
+                # Calculate pool quality score
+                if racks and len(racks) > turn - 1 and racks[turn - 1] is not None:
+                    temp_remaining_tiles = get_remaining_tiles(racks[turn - 1], board_tile_counts)
+                    temp_pool_analysis = analyze_unseen_pool(temp_remaining_tiles)
+                    current_turn_pool_quality_score = temp_pool_analysis.get('quality_score', 0.0)
+                else:
+                    current_turn_pool_quality_score = 0.0
 
-        # Print turn start message for human players
-        if 0 <= turn - 1 < len(is_ai) and not is_ai[turn - 1]:
+                # Generate moves (if not practice mode needing deferred gen, and GADDAG ready)
+                # Needed for human hints primarily
+                if practice_mode != "eight_letter" and not paused_for_power_tile and not paused_for_bingo_practice:
+                    if gaddag_loading_status == 'loaded' and GADDAG_STRUCTURE:
+                        if racks and len(racks) > turn - 1 and racks[turn - 1] is not None:
+                            # Pass blanks correctly here as generate_all_moves still needs it
+                            all_moves = generate_all_moves_gaddag(racks[turn - 1], state['tiles'], board, state['blanks'], GADDAG_STRUCTURE.root)
+                            if all_moves is None:
+                                all_moves = []
+                        else:
+                            all_moves = [] # Handle case where rack might be invalid
+                    elif gaddag_loading_status == 'idle' or gaddag_loading_status == 'loading':
+                        all_moves = [] # GADDAG not ready
+                    else: # Error state
+                        all_moves = []
+            else: # In batch mode
+                 # Ensure pool score is reset/defaulted if needed, though AI calculates its own
+                 current_turn_pool_quality_score = 0.0
+                 # Don't generate moves here, AI will do it
+                 all_moves = []
+            # --- MODIFICATION END ---
+
+        # Print turn start message for human players (only if not batch)
+        if not is_batch_running and 0 <= turn - 1 < len(is_ai) and not is_ai[turn - 1]:
             rack_display = ''.join(sorted(racks[turn - 1])) if racks and len(racks) > turn - 1 and racks[turn - 1] is not None else "N/A"
             print(f"Player {turn} turn started. Rack: {rack_display}")
+            # Only print pool quality if calculated (i.e., not batch)
             print(f"  Current Unseen Pool Quality Score: {current_turn_pool_quality_score:.2f}")
 
         # Update turn tracking and reset flags
@@ -7895,7 +8075,7 @@ def run_game_loop():
 
 
 # Function to Replace: main (Complete)
-# REASON: Conditionally call clock.tick() only when not in batch mode.
+# REASON: Skip event processing calls when not visualizing batch mode for performance.
 
 def main(is_initialized): # Accept initialization status as argument
     # Declare key modified globals ---
@@ -7946,8 +8126,10 @@ def main(is_initialized): # Accept initialization status as argument
     global board_tile_counts
     # --- ADD clock global ---
     global clock
+    # --- ADD Mode Constants ---
+    global MODE_HVH, MODE_HVA, MODE_AVA
 
-    # --- Line Count Before Refactor: 215 --- # (Note: This line count might be outdated now)
+    # --- Line Count Before This Change: 220 ---
 
     print("--- main() function entered ---")
 
@@ -7968,7 +8150,7 @@ def main(is_initialized): # Accept initialization status as argument
             return False # Signal exit
 
         # --- Unpack the returned state variables ---
-        # --- MODIFICATION: Added board_tile_counts to unpacking ---
+        # --- MODIFICATION: Added visualize_batch to unpacking ---
         (game_mode, is_loaded_game, player_names, move_history, final_scores,
          replay_initial_shuffled_bag, board, tiles, scores, blanks, racks, bag,
          replay_mode, current_replay_turn, practice_mode, is_ai, human_player,
@@ -7978,7 +8160,7 @@ def main(is_initialized): # Accept initialization status as argument
          GADDAG_STRUCTURE, practice_target_moves, practice_best_move, all_moves,
          letter_checks, turn, pass_count, exchange_count, consecutive_zero_point_turns,
          last_played_highlight_coords, is_solving_endgame, gaddag_loading_status,
-         board_tile_counts) = init_result # Added board_tile_counts here
+         board_tile_counts, visualize_batch) = init_result # Added visualize_batch here
     # --- End of Initialization Block ---
 
 
@@ -8006,6 +8188,8 @@ def main(is_initialized): # Accept initialization status as argument
                 current_game_initial_racks = [r[:] for r in racks] # Capture new initial racks for this game
                 all_moves = [] # Reset all_moves for new batch game
                 current_replay_turn = 0 # Reset replay turn for new batch game
+                # --- Retrieve visualize_batch from config ---
+                visualize_batch = initial_game_config.get('visualize_batch', False)
         # --- Non-Batch Game Reset Logic (for "Play Again") ---
         elif is_initialized and not is_batch_running: # This handles "Play Again"
             reset_result = reset_for_play_again(is_ai, practice_mode)
@@ -8021,6 +8205,7 @@ def main(is_initialized): # Accept initialization status as argument
              practice_best_move, all_moves, gaddag_loading_status,
              board_tile_counts) = reset_result
             current_replay_turn = 0
+            visualize_batch = False # Not applicable in non-batch
 
 
         # --- Reset Common Per-Game Variables & Initialize State Dictionary ---
@@ -8049,6 +8234,7 @@ def main(is_initialized): # Accept initialization status as argument
             'all_moves': all_moves, # Explicitly add all_moves
             'current_replay_turn': current_replay_turn, # *** Explicitly add current_replay_turn ***
             'board_tile_counts': board_tile_counts, # Add the counter
+            'visualize_batch': visualize_batch, # Add the setting
             # UI / Temporary State (from reset_vars)
             **reset_vars, # Unpack the reset dictionary
             # Add other necessary state not covered by reset_vars
@@ -8100,19 +8286,27 @@ def main(is_initialized): # Accept initialization status as argument
             # --- Practice Mode Message Display ---
             current_state = handle_practice_messages(current_state)
 
+            # --- Determine if drawing/event processing should happen ---
+            should_process_events_and_draw = True # Default to True
+            if current_state['is_batch_running'] and not current_state['visualize_batch']:
+                should_process_events_and_draw = False # Skip if non-visual batch
+
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%% EVENT PROCESSING %%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            event_result_state = process_game_events(current_state, current_state['drawn_rects'])
-            # Update state dictionary based on event processing results
-            current_state.update(event_result_state)
-            # Update local control flags based on the returned state
-            return_to_mode_selection = current_state['return_to_mode_selection']
-            # --- MODIFICATION: Update outer flag based on return_to_mode_selection ---
-            if return_to_mode_selection:
-                # --- ADD DEBUG PRINT ---
-                print(f"--- DEBUG: Setting batch_stop_requested = True because return_to_mode_selection is TRUE (event: {pygame.event.event_name(event.type) if 'event' in locals() else 'N/A'}). ---")
-                batch_stop_requested = True # Set outer flag if user explicitly wants to stop/go back
+            # --- MODIFICATION START: Conditional Event Processing ---
+            if should_process_events_and_draw:
+                event_result_state = process_game_events(current_state, current_state['drawn_rects'])
+                # Update state dictionary based on event processing results
+                current_state.update(event_result_state)
+                # Update local control flags based on the returned state
+                return_to_mode_selection = current_state['return_to_mode_selection']
+                # --- MODIFICATION: Update outer flag based on return_to_mode_selection ---
+                if return_to_mode_selection:
+                    # --- ADD DEBUG PRINT ---
+                    print(f"--- DEBUG: Setting batch_stop_requested = True because return_to_mode_selection is TRUE (event: {pygame.event.event_name(event.type) if 'event' in locals() else 'N/A'}). ---")
+                    batch_stop_requested = True # Set outer flag if user explicitly wants to stop/go back
+            # --- MODIFICATION END ---
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%% END EVENT PROCESSING %%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -8130,25 +8324,24 @@ def main(is_initialized): # Accept initialization status as argument
             if not current_state['is_batch_running']:
                 current_state = handle_practice_restart(current_state)
                 # --- REMOVED check and setting of batch_stop_requested ---
-                # if not current_state['running_inner']:
-                #     print("--- DEBUG: Setting batch_stop_requested = True due to handle_practice_restart failure. ---") # DEBUG
-                #     batch_stop_requested = True # Ensure outer loop stops if restart fails
-                #     break
             # --- END MODIFICATION ---
 
 
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%%%% DRAWING CALL %%%%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            current_state['drawn_rects'] = draw_game_screen(screen, current_state)
-            pygame.display.flip()
+            # --- MODIFICATION START: Conditional Drawing ---
+            if should_process_events_and_draw: # Use the same flag
+                current_state['drawn_rects'] = draw_game_screen(screen, current_state)
+                pygame.display.flip()
+            # --- MODIFICATION END ---
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%% END DRAWING CALL %%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
             # --- Clock Tick (Conditional) ---
-            if not current_state['is_batch_running']:
-                clock.tick(60) # Limit frame rate only if interactive
+            if not current_state['is_batch_running'] and current_state['game_mode'] != MODE_AVA:
+                clock.tick(60) # Limit frame rate only if interactive and not AI vs AI
             # --- End Clock Tick ---
 
 
@@ -8188,7 +8381,7 @@ def main(is_initialized): # Accept initialization status as argument
         print("--- main(): Quitting pygame and exiting. ---")
         return False # Signal exit
 
-# --- Line Count After Refactor: 218 --- # (Note: This line count might be outdated now)
+# --- Line Count After This Change: 228 ---
 
 
 
