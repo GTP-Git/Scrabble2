@@ -1,4 +1,7 @@
 
+
+
+
 #python
 #Scrabble 26APR25 Cython V3
 
@@ -21,6 +24,9 @@ import copy
 import threading
 import array
 import numpy as np
+import cProfile
+import pstats
+import io
 #from gaddag_traverse_cy import _gaddag_traverse
 
 import scrabble_helpers
@@ -110,6 +116,8 @@ SECOND_CLICK_TIME = 500  # Time window for second click
 ALL_WORDS_DIALOG_WIDTH = 750
 ALL_WORDS_DIALOG_HEIGHT = 600
 SCROLL_SPEED = 20
+DEVELOPER_PROFILE_ENABLED = False # Global flag for cProfile toggle
+
 
 STATS_LABEL_X_OFFSET = 10
 STATS_P1_VAL_X_OFFSET = 160 # Increased from 120
@@ -173,23 +181,34 @@ dialog_font = pygame.font.SysFont("Arial", 24)
 
 
 
+
 TILE_LETTER_CACHE = {
-    'regular': {}, # For standard tiles (black text)
-    'blank': {}    # For blank tiles (white text)
+    'regular': {},        # For standard tiles (black text)
+    'blank': {},          # For blank tiles on rack (white '?')
+    'blank_assigned': {} # <<< ADDED: For assigned blanks on board (white letter)
 }
 
 print("Pre-rendering tile letters...")
-# Pre-render regular tile letters (A-Z)
+# Pre-render regular tile letters (A-Z) - Black Text
 for i in range(26):
     letter = chr(ord('A') + i)
-    # Render black text (True for anti-aliasing)
-    text_surf = font.render(letter, True, BLACK)
+    text_surf = font.render(letter, True, BLACK) # Black text
     TILE_LETTER_CACHE['regular'][letter] = text_surf
 
-# Pre-render blank tile symbol (?) - white text
+# Pre-render blank tile symbol (?) for rack - White Text
 blank_surf = font.render('?', True, WHITE)
 TILE_LETTER_CACHE['blank']['?'] = blank_surf
+
+# <<< ADDED: Pre-render assigned blank letters (A-Z) - White Text >>>
+for i in range(26):
+    letter = chr(ord('A') + i)
+    text_surf = font.render(letter, True, WHITE) # White text
+    TILE_LETTER_CACHE['blank_assigned'][letter] = text_surf
+# <<< END ADDED >>>
+
 print("Tile letter pre-rendering complete.")
+
+
 
 
 
@@ -811,19 +830,21 @@ def draw_rack(player, rack, scores, turn, player_names, dragged_tile=None, drag_
 
 
 
-# ADDED: Function to draw the Developer Tools dialog
+# Function to Replace: draw_dev_tools_dialog
+# REASON: Add cProfile checkbox.
 
-def draw_dev_tools_dialog(visualize_checked):
+def draw_dev_tools_dialog(visualize_checked, cprofile_checked): # Added cprofile_checked parameter
     """
     Draws the Developer Tools dialog box.
 
     Args:
         visualize_checked (bool): The current state of the "Visualize Batch Games" checkbox.
+        cprofile_checked (bool): The current state of the "cProfile" checkbox.
 
     Returns:
-        tuple: (visualize_checkbox_rect, close_button_rect)
+        tuple: (visualize_checkbox_rect, cprofile_checkbox_rect, close_button_rect) # Added cprofile rect
     """
-    dialog_width, dialog_height = 350, 180 # Adjusted size
+    dialog_width, dialog_height = 350, 220 # Increased height for new checkbox
     dialog_x = (WINDOW_WIDTH - dialog_width) // 2
     dialog_y = (WINDOW_HEIGHT - dialog_height) // 2
 
@@ -837,11 +858,19 @@ def draw_dev_tools_dialog(visualize_checked):
 
     # Checkbox for Visualize Batch Games
     checkbox_x = dialog_x + 20
-    checkbox_y = dialog_y + 60
-    visualize_checkbox_rect = pygame.Rect(checkbox_x, checkbox_y, 20, 20)
-    draw_checkbox(screen, checkbox_x, checkbox_y, visualize_checked)
-    label_text = ui_font.render("Visualize Batch Games", True, BLACK)
-    screen.blit(label_text, (checkbox_x + 30, checkbox_y + 2))
+    checkbox_y_visualize = dialog_y + 60
+    visualize_checkbox_rect = pygame.Rect(checkbox_x, checkbox_y_visualize, 20, 20)
+    draw_checkbox(screen, checkbox_x, checkbox_y_visualize, visualize_checked)
+    label_text_visualize = ui_font.render("Visualize Batch Games", True, BLACK)
+    screen.blit(label_text_visualize, (checkbox_x + 30, checkbox_y_visualize + 2))
+
+    # --- ADDED: Checkbox for cProfile ---
+    checkbox_y_cprofile = checkbox_y_visualize + 35 # Position below previous checkbox
+    cprofile_checkbox_rect = pygame.Rect(checkbox_x, checkbox_y_cprofile, 20, 20)
+    draw_checkbox(screen, checkbox_x, checkbox_y_cprofile, cprofile_checked)
+    label_text_cprofile = ui_font.render("Enable cProfile on Exit", True, BLACK)
+    screen.blit(label_text_cprofile, (checkbox_x + 30, checkbox_y_cprofile + 2))
+    # --- END ADDED ---
 
     # Close Button
     close_button_width = 80
@@ -857,7 +886,7 @@ def draw_dev_tools_dialog(visualize_checked):
     close_text = button_font.render("Close", True, BLACK)
     screen.blit(close_text, close_text.get_rect(center=close_button_rect.center))
 
-    return visualize_checkbox_rect, close_button_rect
+    return visualize_checkbox_rect, cprofile_checkbox_rect, close_button_rect # Return new rect
 
 
 
@@ -1050,7 +1079,7 @@ def is_word_length_allowed(word_len, number_checks):
 
 
 # Function to Replace: mode_selection_screen
-# REASON: Move Developer Tools button to bottom-left.
+# REASON: Handle state for cProfile checkbox in Developer Tools.
 
 def mode_selection_screen():
     """Display and handle the game mode selection screen, including Load Game via text input and Developer Tools."""
@@ -1082,7 +1111,9 @@ def mode_selection_screen():
     # Developer Tools State
     showing_dev_tools_dialog = False
     visualize_batch_checked = False # Default to False (unchecked)
+    cprofile_checked = False # <<< ADDED: cProfile state, default False
     dev_tools_visualize_rect = None # Rect for checkbox click detection
+    dev_tools_cprofile_rect = None # <<< ADDED: Rect for cProfile checkbox
     dev_tools_close_rect = None # Rect for close button click detection
 
     print("--- mode_selection_screen(): Entering main loop (while selected_mode is None:)... ---")
@@ -1100,7 +1131,6 @@ def mode_selection_screen():
         load_game_button_rect = pygame.Rect(play_later_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
         batch_game_button_rect = pygame.Rect(load_game_button_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
         start_game_button_rect = pygame.Rect(batch_game_button_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
-        # --- MODIFICATION: Developer Tools Button Position (Bottom Left) ---
         dev_tools_button_width = 120 # Slightly wider for text
         dev_tools_button_rect = pygame.Rect(
             10, # Left edge padding
@@ -1108,8 +1138,6 @@ def mode_selection_screen():
             dev_tools_button_width,
             BUTTON_HEIGHT
         )
-        # --- END MODIFICATION ---
-
 
         # Calculate Load Input Field/Button Positions unconditionally
         load_input_width = 300; load_input_x = load_game_button_rect.left; load_input_y = load_game_button_rect.top - BUTTON_GAP - BUTTON_HEIGHT
@@ -1166,9 +1194,12 @@ def mode_selection_screen():
             if showing_dev_tools_dialog:
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     x, y = event.pos
-                    # Checkbox click
+                    # Checkbox click - Visualize
                     if dev_tools_visualize_rect and dev_tools_visualize_rect.collidepoint(x, y):
                         visualize_batch_checked = not visualize_batch_checked
+                    # <<< ADDED: Checkbox click - cProfile >>>
+                    elif dev_tools_cprofile_rect and dev_tools_cprofile_rect.collidepoint(x, y):
+                        cprofile_checked = not cprofile_checked
                     # Close button click
                     elif dev_tools_close_rect and dev_tools_close_rect.collidepoint(x, y):
                         showing_dev_tools_dialog = False
@@ -1268,8 +1299,8 @@ def mode_selection_screen():
                             if num_games is not None:
                                 print(f"--- mode_selection_screen(): Starting batch of {num_games} games ---")
                                 selected_mode = "BATCH_MODE"
-                                # Include visualize_batch_checked
-                                loaded_game_data = (current_selected_game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked)
+                                # <<< Include visualize_batch_checked AND cprofile_checked >>>
+                                loaded_game_data = (current_selected_game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked, cprofile_checked)
                                 break # Exit mode selection loop
                             else:
                                 print("--- mode_selection_screen(): Batch game setup cancelled ---")
@@ -1467,7 +1498,8 @@ def mode_selection_screen():
 
         # Draw Developer Tools Dialog
         if showing_dev_tools_dialog:
-            dev_tools_visualize_rect, dev_tools_close_rect = draw_dev_tools_dialog(visualize_batch_checked)
+            # <<< Pass cprofile_checked state >>>
+            dev_tools_visualize_rect, dev_tools_cprofile_rect, dev_tools_close_rect = draw_dev_tools_dialog(visualize_batch_checked, cprofile_checked)
 
 
         # --- Display Update ---
@@ -1481,12 +1513,15 @@ def mode_selection_screen():
     if selected_mode == "LOADED_GAME":
         return selected_mode, loaded_game_data
     elif selected_mode == "BATCH_MODE":
-        # Return visualize_batch_checked
-        return selected_mode, loaded_game_data # loaded_game_data already contains visualize_batch_checked
+        # <<< Return cprofile_checked >>>
+        return selected_mode, loaded_game_data # loaded_game_data already contains visualize_batch_checked and cprofile_checked
     else:
-        # Return visualize_batch_checked (though not used here)
-        # Add visualize_batch_checked to the tuple for consistency, even if not used for non-batch modes
-        return selected_mode, (player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state, visualize_batch_checked)
+        # <<< Return cprofile_checked >>>
+        # Add cprofile_checked to the tuple for consistency
+        return selected_mode, (player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state, visualize_batch_checked, cprofile_checked)
+
+
+
 
 
 
@@ -3222,11 +3257,15 @@ def collect_game_stats(game_num, player_names, final_scores, move_history, gcg_f
 
 
 
+# Function to Replace: save_batch_statistics
+# REASON: Add tracking and printing of highest/lowest probability bingos.
+
 def save_batch_statistics(batch_results, player_names, batch_summary_filename):
     """
     Calculates aggregate stats and saves batch results to a specified summary file,
     including detailed bingo info, quadrant counts, GCG filename, game duration,
-    and luck factor for each game. Also includes total batch duration and luck.
+    luck factor, vertical bingo quartile analysis, and details on the
+    highest/lowest probability bingos played. Also includes total batch duration and luck.
     """
     if not batch_results:
         print("No batch results to save.")
@@ -3246,6 +3285,23 @@ def save_batch_statistics(batch_results, player_names, batch_summary_filename):
     except FileNotFoundError:
         print("Warning: 8-letter-list.txt not found for batch stats file.")
     # --- End Load Word Lists ---
+
+    # --- Initialize Quartile Counters ---
+    bingo_quartiles_7 = {'Q1': 0, 'Q2': 0, 'Q3': 0, 'Q4': 0}
+    bingo_quartiles_8 = {'Q1': 0, 'Q2': 0, 'Q3': 0, 'Q4': 0}
+    total_7_bingos_ranked = 0
+    total_8_bingos_ranked = 0
+    # --- End Initialize Quartile Counters ---
+
+    # --- Initialize Min/Max Bingo Trackers ---
+    min_max_bingo_info = {
+        7: {'min_idx': float('inf'), 'min_word': 'N/A', 'min_game': -1, 'min_file': 'N/A',
+            'max_idx': -1,          'max_word': 'N/A', 'max_game': -1, 'max_file': 'N/A'},
+        8: {'min_idx': float('inf'), 'min_word': 'N/A', 'min_game': -1, 'min_file': 'N/A',
+            'max_idx': -1,          'max_word': 'N/A', 'max_game': -1, 'max_file': 'N/A'}
+    }
+    # --- End Initialize Min/Max Bingo Trackers ---
+
 
     num_games = len(batch_results)
     p1_wins = sum(1 for game in batch_results if game['winner'] == player_names[0])
@@ -3274,7 +3330,6 @@ def save_batch_statistics(batch_results, player_names, batch_summary_filename):
         # Aggregate Luck Calculation ---
         'total_p1_luck': sum(g.get('player1_total_luck', 0.0) for g in batch_results),
         'total_p2_luck': sum(g.get('player2_total_luck', 0.0) for g in batch_results),
-        
     }
 
     # --- Average Bingos per Game ---
@@ -3284,7 +3339,6 @@ def save_batch_statistics(batch_results, player_names, batch_summary_filename):
     # Average Luck per Game ---
     p1_avg_luck_per_game = agg_stats['total_p1_luck'] / num_games if num_games > 0 else 0.0
     p2_avg_luck_per_game = agg_stats['total_p2_luck'] / num_games if num_games > 0 else 0.0
-    
 
     # --- Aggregate Average Bingo Index ---
     total_bingo_index_sum = 0
@@ -3297,11 +3351,12 @@ def save_batch_statistics(batch_results, player_names, batch_summary_filename):
 
     # Calculate Total Batch Duration ---
     total_batch_duration_seconds = sum(game.get('game_duration_seconds', 0.0) for game in batch_results)
-    
 
-    # Iterate through games to calculate combined index and power tile scores
+    # Iterate through games to calculate combined index, power tile scores, QUARTILES, and MIN/MAX bingos
     for game in batch_results:
         game_move_history = game.get('move_history', [])
+        game_number = game.get('game_number', -1)
+        gcg_filename = game.get('gcg_filename', 'N/A')
         first_power_used_in_game = set() # Track first use *within this game*
 
         for move in game_move_history:
@@ -3310,25 +3365,65 @@ def save_batch_statistics(batch_results, player_names, batch_summary_filename):
                 score = move.get('score', 0)
                 word_len = len(word)
 
-                # Calculate Bingo Index (Existing Logic)
+                # Calculate Bingo Index, Quartiles, and Min/Max
                 if move.get('is_bingo', False):
                     index = None
-                    if word_len == 7 and seven_letter_words:
-                        index = get_word_index(word, seven_letter_words)
-                    elif word_len == 8 and eight_letter_words:
-                        index = get_word_index(word, eight_letter_words)
-                    if index is not None:
-                        total_bingo_index_sum += index
-                        bingos_with_index_count += 1
+                    word_list = None
+                    quartile_dict = None
+                    min_max_tracker = None # Tracker for this length
 
-                # --- NEW: Calculate Power Tile First Play Scores ---
+                    if word_len == 7 and seven_letter_words:
+                        word_list = seven_letter_words
+                        quartile_dict = bingo_quartiles_7
+                        min_max_tracker = min_max_bingo_info[7]
+                    elif word_len == 8 and eight_letter_words:
+                        word_list = eight_letter_words
+                        quartile_dict = bingo_quartiles_8
+                        min_max_tracker = min_max_bingo_info[8]
+
+                    if word_list and min_max_tracker:
+                        index = get_word_index(word, word_list) # Returns 1-based index or None
+                        if index is not None:
+                            total_bingo_index_sum += index
+                            bingos_with_index_count += 1
+                            # Increment total ranked counter for the specific length
+                            if word_len == 7: total_7_bingos_ranked += 1
+                            elif word_len == 8: total_8_bingos_ranked += 1
+
+                            # Calculate Quartile
+                            list_len = len(word_list)
+                            q1_limit = list_len / 4.0
+                            q2_limit = list_len / 2.0
+                            q3_limit = 3 * list_len / 4.0
+
+                            if index <= q1_limit: quartile_dict['Q1'] += 1
+                            elif index <= q2_limit: quartile_dict['Q2'] += 1
+                            elif index <= q3_limit: quartile_dict['Q3'] += 1
+                            else: quartile_dict['Q4'] += 1
+
+                            # Check for Min Index
+                            if index < min_max_tracker['min_idx']:
+                                min_max_tracker['min_idx'] = index
+                                min_max_tracker['min_word'] = word # Store the word
+                                min_max_tracker['min_game'] = game_number
+                                min_max_tracker['min_file'] = gcg_filename
+
+                            # Check for Max Index
+                            if index > min_max_tracker['max_idx']:
+                                min_max_tracker['max_idx'] = index
+                                min_max_tracker['max_word'] = word # Store the word
+                                min_max_tracker['max_game'] = game_number
+                                min_max_tracker['max_file'] = gcg_filename
+                        # else: word not found in list, cannot rank or track min/max
+
+                # --- Calculate Power Tile First Play Scores (Existing Logic) ---
                 power_in_word = {char for char in word if char in power_tiles}
                 for pt in power_in_word:
                     if pt not in first_power_used_in_game:
                         power_tile_scores[pt] += score
                         power_tile_counts[pt] += 1
                         first_power_used_in_game.add(pt) # Mark as used for this game
-                # --- END NEW Power Tile Logic ---
+                # --- END Power Tile Logic ---
 
     aggregate_avg_bingo_index = total_bingo_index_sum / bingos_with_index_count if bingos_with_index_count > 0 else 0.0
 
@@ -3338,7 +3433,6 @@ def save_batch_statistics(batch_results, player_names, batch_summary_filename):
         avg_power_scores[pt] = power_tile_scores[pt] / power_tile_counts[pt] if power_tile_counts[pt] > 0 else 0.0
     # --- END Power Tile Calculation ---
 
-
     # --- Aggregate Quadrant Averages ---
     total_quad_counts = {"Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0}
     for game in batch_results:
@@ -3347,18 +3441,17 @@ def save_batch_statistics(batch_results, player_names, batch_summary_filename):
             total_quad_counts[key] += quad_counts.get(key, 0)
     avg_quad_counts = {key: val / num_games if num_games > 0 else 0 for key, val in total_quad_counts.items()}
 
-
-    # Generate filename (use the passed-in name)
-    # save_filename = batch_summary_filename # Use the parameter
+    # --- Generate Vertical Histogram Strings ---
+    hist_lines_7 = create_vertical_histogram(bingo_quartiles_7, total_7_bingos_ranked, "7-Letter Bingo Quartiles")
+    hist_lines_8 = create_vertical_histogram(bingo_quartiles_8, total_8_bingos_ranked, "8-Letter Bingo Quartiles")
+    # --- End Generate Vertical Histogram Strings ---
 
     # Write to file
     try:
         with open(batch_summary_filename, "w") as f: # Use the parameter here
             f.write(f"--- Batch Game Results ---\n")
             f.write(f"Total Games: {num_games}\n")
-            # Write Total Batch Duration ---
             f.write(f"Total Batch Duration: {format_duration(total_batch_duration_seconds)}\n")
-            
             f.write(f"Players: {player_names[0]} vs {player_names[1]}\n")
             f.write("-" * 25 + "\n")
             f.write("Overall Summary:\n")
@@ -3377,22 +3470,57 @@ def save_batch_statistics(batch_results, player_names, batch_summary_filename):
             f.write(f"Avg Bingo Score:   {agg_stats['p1_avg_bingo_score']:>12.2f} {agg_stats['p2_avg_bingo_score']:>12.2f}\n")
             f.write(f"Total Blanks Used: {agg_stats['total_p1_blanks']:>12} {agg_stats['total_p2_blanks']:>12}\n")
             f.write(f"Avg Leave Value:   {agg_stats['p1_avg_leave']:>12.2f} {agg_stats['p2_avg_leave']:>12.2f}\n")
-            # Write Aggregate Luck ---
             f.write(f"Total Luck Factor: {agg_stats['total_p1_luck']:>+12.2f} {agg_stats['total_p2_luck']:>+12.2f}\n")
             f.write(f"Avg Luck / Game:   {p1_avg_luck_per_game:>+12.2f} {p2_avg_luck_per_game:>+12.2f}\n")
-            
             f.write("-" * 25 + "\n")
             f.write("Aggregate Bingo Index (7/8 Letter Words):\n")
             f.write(f"  Avg Index (Combined): {aggregate_avg_bingo_index:>6.1f}  (Based on {bingos_with_index_count} bingos)\n")
+
+            # --- ADD MIN/MAX BINGO INFO ---
+            f.write("\n") # Blank line before min/max info
+            # 7-Letter
+            f.write("  7-Letter Bingos:\n")
+            if min_max_bingo_info[7]['min_idx'] != float('inf'):
+                info = min_max_bingo_info[7]
+                f.write(f"    Highest Probability: {info['min_word']} ({info['min_idx']}) - Game {info['min_game']} ({info['min_file']})\n")
+            else:
+                f.write("    Highest Probability: N/A\n")
+            if min_max_bingo_info[7]['max_idx'] != -1:
+                info = min_max_bingo_info[7]
+                f.write(f"    Lowest Probability:  {info['max_word']} ({info['max_idx']}) - Game {info['max_game']} ({info['max_file']})\n")
+            else:
+                f.write("    Lowest Probability:  N/A\n")
+            # 8-Letter
+            f.write("  8-Letter Bingos:\n")
+            if min_max_bingo_info[8]['min_idx'] != float('inf'):
+                info = min_max_bingo_info[8]
+                f.write(f"    Highest Probability: {info['min_word']} ({info['min_idx']}) - Game {info['min_game']} ({info['min_file']})\n")
+            else:
+                f.write("    Highest Probability: N/A\n")
+            if min_max_bingo_info[8]['max_idx'] != -1:
+                info = min_max_bingo_info[8]
+                f.write(f"    Lowest Probability:  {info['max_word']} ({info['max_idx']}) - Game {info['max_game']} ({info['max_file']})\n")
+            else:
+                f.write("    Lowest Probability:  N/A\n")
+            # --- END MIN/MAX BINGO INFO ---
+
             f.write("-" * 25 + "\n")
-            # Write Power Tile Scores ---
+            f.write("Bingo Quartile Ranks (Based on Word List Position):\n\n") # Add extra newline
+            # 7-Letter Bingos
+            for line in hist_lines_7: # Write histogram lines (includes title)
+                f.write(line + "\n")
+            f.write("\n") # Add blank line between histograms
+            # 8-Letter Bingos
+            for line in hist_lines_8: # Write histogram lines (includes title)
+                f.write(line + "\n")
+
+            f.write("-" * 25 + "\n")
             f.write("Power Tile First Play Scores (Aggregate Avg):\n")
             for pt in sorted(power_tiles): # Sort J, Q, X, Z for consistent order
                  count = power_tile_counts[pt]
                  avg_score = avg_power_scores[pt]
                  f.write(f"  {pt}: {avg_score:>10.2f}  (Based on {count} plays)\n")
             f.write("-" * 25 + "\n")
-            # --- END Power Tile Scores ---
             f.write("Aggregate Quadrant Usage (Avg Tiles Per Game):\n")
             f.write(f"  Q2 (Top-Left):  {avg_quad_counts['Q2']:>6.2f}    Q1 (Top-Right):   {avg_quad_counts['Q1']:>6.2f}\n")
             f.write(f"  Q3 (Bot-Left):  {avg_quad_counts['Q3']:>6.2f}    Q4 (Bot-Right):  {avg_quad_counts['Q4']:>6.2f}\n")
@@ -3406,26 +3534,15 @@ def save_batch_statistics(batch_results, player_names, batch_summary_filename):
                 f.write(f"  Score: {game['player1_name']} {game['player1_score']} - {game['player2_name']} {game['player2_score']}\n")
                 f.write(f"  Winner: {game['winner']}\n")
                 f.write(f"  Moves: P1={game['player1_moves']}, P2={game['player2_moves']}\n")
-
-                # Write Individual Game Duration ---
                 game_duration_str = format_duration(game.get('game_duration_seconds', 0.0))
                 f.write(f"  Duration: {game_duration_str}\n")
-                
-
-                # Write Individual Game Luck ---
                 p1_luck = game.get('player1_total_luck', 0.0)
                 p2_luck = game.get('player2_total_luck', 0.0)
                 f.write(f"  Luck Factor: P1={p1_luck:+.2f}, P2={p2_luck:+.2f}\n")
-                
-
-                # Write Quadrant Counts for this game
                 quad_counts = game.get('quadrant_counts', {"Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0})
                 f.write(f"  Quadrants: Q2={quad_counts['Q2']}, Q1={quad_counts['Q1']}, Q3={quad_counts['Q3']}, Q4={quad_counts['Q4']}\n")
-
-                # Write GCG Filename ---
                 gcg_file = game.get('gcg_filename', 'N/A')
                 f.write(f"  Saved GCG: {gcg_file}\n")
-                
 
                 # Write Bingo Details for this game
                 game_move_history = game.get('move_history', [])
@@ -3482,6 +3599,108 @@ def save_batch_statistics(batch_results, player_names, batch_summary_filename):
         import traceback
         traceback.print_exc() # Print stack trace for debugging
         show_message_dialog(f"Unexpected error saving batch stats: {e}", "Save Error")
+
+
+
+
+
+
+
+
+# Function to Replace: create_vertical_histogram
+# REASON: Add title and y-axis labels to the vertical histogram output.
+
+def create_vertical_histogram(quartile_counts, total_ranked, title, max_height=10):
+    """
+    Creates a multi-line string representation of a vertical histogram
+    for quartiles, including a title and y-axis labels.
+
+    Args:
+        quartile_counts (dict): Dictionary with counts for 'Q1', 'Q2', 'Q3', 'Q4'.
+        total_ranked (int): The total number of bingos included in the counts.
+        title (str): The title to print above the histogram.
+        max_height (int): The maximum desired height of the histogram bars in characters.
+
+    Returns:
+        list: A list of strings, each representing a line of the histogram.
+              Returns list with title and message if total_ranked is 0.
+    """
+    lines = []
+    # Add title centered (approximately)
+    title_padding = "  " # Initial indent matches histogram body
+    lines.append(title_padding + title)
+    lines.append("") # Add a blank line after title
+
+    if total_ranked == 0:
+        lines.append("  (No ranked bingos)")
+        return lines
+
+    quartiles = ['Q1', 'Q2', 'Q3', 'Q4']
+
+    # Find the maximum count in any quartile
+    max_count = 0
+    for q in quartiles:
+        max_count = max(max_count, quartile_counts.get(q, 0))
+
+    if max_count == 0:
+        lines.append("  (No counts in quartiles)")
+        return lines
+
+    # Determine the scale factor
+    scale = math.ceil(max_count / max_height) if max_count > max_height else 1
+    scale = max(1, scale) # Ensure scale is at least 1
+
+    # Calculate scaled heights for each bar
+    scaled_heights = {}
+    max_scaled_height = 0
+    for q in quartiles:
+        # Use ceil to ensure even a small count gets at least one '*' if scale is large
+        height = math.ceil(quartile_counts.get(q, 0) / scale)
+        scaled_heights[q] = height
+        max_scaled_height = max(max_scaled_height, height)
+
+    # --- Y-Axis Label Calculation ---
+    max_value_on_axis = max_scaled_height * scale
+    # Determine number of labels (aim for ~5, but fewer if height is small)
+    num_labels = min(max_scaled_height + 1, 6) # +1 for 0 label
+    label_interval_h = max(1, max_scaled_height // (num_labels - 1)) if num_labels > 1 else 1
+
+    # Find max label width for alignment
+    label_width = len(str(max_value_on_axis))
+    y_axis_prefix_width = label_width + 2 # width + space + separator (| or +)
+
+    # --- Build Histogram Lines with Y-Axis ---
+    for h in range(max_scaled_height, 0, -1):
+        # Determine if a label should be printed for this row height
+        label_str = ""
+        # Print label at the top and at intervals
+        if h == max_scaled_height or h % label_interval_h == 0:
+            label_val = h * scale
+            label_str = f"{label_val:>{label_width}} |" # Right align value, add separator
+        else:
+            label_str = f"{' ' * label_width} |" # Padding + separator
+
+        # Build the bar part of the line
+        bar_line = ""
+        for q in quartiles:
+            if scaled_heights.get(q, 0) >= h:
+                bar_line += "*  " # Add asterisk and spacing
+            else:
+                bar_line += "   " # Add spacing
+
+        lines.append(label_str + bar_line.rstrip()) # Combine label and bars
+
+    # --- Add X-Axis Base ---
+    # Add the 0 label line
+    lines.append(f"{0:>{label_width}} +{'-' * (len(quartiles) * 3)}") # Base line with 0
+    # Add the Q labels, aligned with bars
+    lines.append(f"{' ' * y_axis_prefix_width}{'  '.join(quartiles)}")
+
+    # Add the scale note if scale > 1
+    if scale > 1:
+        lines.append(f"{' ' * y_axis_prefix_width}(Each * represents approx. {scale} bingos)")
+
+    return lines
 
 
 
@@ -5365,7 +5584,7 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
 
 
 # Function to Replace: initialize_game
-# REASON: Add debug print after resetting practice_target_moves for 8-letter mode.
+# REASON: Ensure global DEVELOPER_PROFILE_ENABLED is set correctly.
 
 def initialize_game(selected_mode_result, return_data, main_called_flag):
     """
@@ -5373,10 +5592,11 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
     Starts background GADDAG loading if not already loaded/loading.
     Returns the current GADDAG loading status along with other state variables.
     Initializes and populates board_tile_counts.
-    Unpacks visualize_batch setting for batch mode.
+    Unpacks visualize_batch and cProfile settings, setting the global flag.
     Adds debug print for 8-letter practice init.
     """
     global GADDAG_STRUCTURE, gaddag_loading_status, gaddag_load_thread # Allow modification
+    global DEVELOPER_PROFILE_ENABLED # <<< Allow modification of global flag
 
     print("--- initialize_game() entered ---")
 
@@ -5435,6 +5655,7 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
     is_solving_endgame = False
     board_tile_counts = Counter() # Initialize the new counter
     visualize_batch = False # Default visualize_batch setting
+    cprofile_enabled = False # Default cProfile setting
 
     # --- Game State Initialization based on selected mode ---
     print(f"--- initialize_game(): Starting game state initialization for mode: {selected_mode_result} ---")
@@ -5457,20 +5678,27 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
                 if tiles_loaded[r][c]:
                     board_tile_counts[tiles_loaded[r][c]] += 1
         print(f"--- initialize_game(): Loaded Game Setup Complete. Players: {player_names}, Moves: {len(move_history)} ---")
+        # Set global cProfile flag for loaded games (default to False)
+        DEVELOPER_PROFILE_ENABLED = False # Cannot profile a loaded game start easily
 
     elif selected_mode_result == "BATCH_MODE":
         is_batch_running = True
-        # --- MODIFICATION: Unpack visualize_batch_checked ---
+        # --- MODIFICATION: Unpack cprofile_checked ---
         try:
-            # Expect 7 items now
-            game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked = return_data
+            # Expect 8 items now
+            game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked, cprofile_checked = return_data
             visualize_batch = visualize_batch_checked # Store the setting
+            cprofile_enabled = cprofile_checked # Store cProfile setting
         except ValueError:
             print("Error: Incorrect number of values unpacked for BATCH_MODE setup. Using defaults.")
-            # Handle error case - maybe default visualize_batch to False or True?
-            game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games = return_data # Unpack original 6
+            # Handle error case
+            game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked = return_data # Unpack original 7
             visualize_batch = False # Default if unpacking failed
+            cprofile_enabled = False # Default cProfile
         # --- END MODIFICATION ---
+
+        # Set global cProfile flag
+        DEVELOPER_PROFILE_ENABLED = cprofile_enabled
 
         total_batch_games = num_games
         current_batch_game_num = 1
@@ -5495,14 +5723,14 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
         except OSError as e: print(f"Warning: Error listing directory for batch sequence number: {e}. Using sequence 1.")
         batch_base_filename_prefix = f"{batch_date_str}-{batch_time_str}-BATCH-{batch_seq_num}"
 
-        # --- MODIFICATION: Add visualize_batch to initial_game_config ---
+        # Add visualize_batch and cprofile_enabled to initial_game_config
         initial_game_config = {
             'game_mode': game_mode, 'player_names': player_names, 'human_player': human_player,
             'use_endgame_solver': USE_ENDGAME_SOLVER, 'use_ai_simulation': USE_AI_SIMULATION,
             'batch_filename_prefix': batch_base_filename_prefix,
-            'visualize_batch': visualize_batch # Store the setting here
+            'visualize_batch': visualize_batch,
+            'cprofile_enabled': cprofile_enabled
         }
-        # --- END MODIFICATION ---
         is_ai = [False, False]
         if initial_game_config['game_mode'] == MODE_HVA: is_ai[2 - initial_game_config['human_player']] = True
         elif initial_game_config['game_mode'] == MODE_AVA: is_ai = [True, True]
@@ -5517,26 +5745,32 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
          move_history, pass_count, exchange_count, consecutive_zero_point_turns,
          last_played_highlight_coords, is_solving_endgame, board_tile_counts) = reset_result # Unpack counter
         initial_racks = [r[:] for r in racks]
-        print(f"--- initialize_game(): Batch Mode Setup Complete. Running {total_batch_games} games. Visualize: {visualize_batch}. Base Filename Prefix: {batch_base_filename_prefix} ---")
+        print(f"--- initialize_game(): Batch Mode Setup Complete. Running {total_batch_games} games. Visualize: {visualize_batch}. cProfile: {cprofile_enabled}. Base Filename Prefix: {batch_base_filename_prefix} ---")
 
     elif selected_mode_result is not None: # Normal New Game or Practice
         print(f"--- initialize_game(): Handling New Game Setup ({selected_mode_result}) ---")
         game_mode = selected_mode_result; is_loaded_game = False; replay_initial_shuffled_bag = None
-        # --- MODIFICATION: Unpack visualize_batch (though unused here) ---
+        # --- MODIFICATION: Unpack cprofile_checked ---
         try:
-            # Expect 9 items now
-            player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state, visualize_batch_checked = return_data
+            # Expect 10 items now
+            player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state, visualize_batch_checked, cprofile_checked = return_data
             # visualize_batch = visualize_batch_checked # Store if needed later
+            cprofile_enabled = cprofile_checked # Store cProfile setting
         except ValueError:
              print("Error: Incorrect number of values unpacked for New Game setup. Using defaults.")
-             player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state = return_data # Original 8
+             player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state, visualize_batch_checked = return_data # Original 9
              # visualize_batch = False # Default
+             cprofile_enabled = False # Default cProfile
         # --- END MODIFICATION ---
+
+        # Set global cProfile flag
+        DEVELOPER_PROFILE_ENABLED = cprofile_enabled
 
         USE_ENDGAME_SOLVER = use_endgame_solver_checked
         USE_AI_SIMULATION = use_ai_simulation_checked
         print(f"--- initialize_game(): Use Endgame Solver set to: {USE_ENDGAME_SOLVER} ---")
         print(f"--- initialize_game(): Use AI Simulation set to: {USE_AI_SIMULATION} ---")
+        print(f"--- initialize_game(): cProfile Enabled set to: {DEVELOPER_PROFILE_ENABLED} ---") # Added print
 
         if practice_state and practice_mode == "eight_letter":
             # ... (8-letter practice setup - unchanged) ...
@@ -5547,10 +5781,8 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
                     if tiles[r][c]:
                         board_tile_counts[tiles[r][c]] += 1
             print("--- initialize_game(): Loaded state from 8-letter practice. ---")
-            # --- ADDED DEBUG PRINT ---
             practice_target_moves = [] # Reset here
             print(f"  DEBUG initialize_game (8-letter): Reset practice_target_moves. Length is now: {len(practice_target_moves)}")
-            # --- END ADDED DEBUG PRINT ---
             practice_best_move = None
             all_moves = []
         elif practice_state: # Assuming other practice modes might also have initial state
@@ -5581,21 +5813,16 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
 
         initial_racks = [rack[:] for rack in racks]
 
-        # --- MOVED 8-letter specific init here ---
-        # if practice_mode == "eight_letter":
-        #     print("--- initialize_game(): Performing 8-letter practice specific init (move gen deferred)... ---")
-        #     practice_target_moves = []
-        #     practice_best_move = None
-        #     all_moves = []
-        # --- END MOVED ---
-
     elif selected_mode_result is None:
         print("--- initialize_game(): Mode selection returned None. Exiting. ---")
-        pygame.quit(); sys.exit()
-        return None
+        # If mode selection returns None, it implies an exit request before initialization
+        # We should probably exit here cleanly.
+        pygame.quit()
+        sys.exit()
+        # return None # This line won't be reached
 
     print("--- initialize_game(): Initialization complete. Returning state. ---")
-    # --- MODIFICATION: Add visualize_batch to the return tuple ---
+    # Return tuple (ensure cprofile_enabled is included)
     return (game_mode, is_loaded_game, player_names, move_history, final_scores,
             replay_initial_shuffled_bag, board, tiles, scores, blanks, racks, bag,
             replay_mode, current_replay_turn, practice_mode, is_ai, human_player,
@@ -5605,7 +5832,7 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
             GADDAG_STRUCTURE, practice_target_moves, practice_best_move, all_moves,
             letter_checks, turn, pass_count, exchange_count, consecutive_zero_point_turns,
             last_played_highlight_coords, is_solving_endgame, gaddag_loading_status,
-            board_tile_counts, visualize_batch) # Added visualize_batch here
+            board_tile_counts, visualize_batch, cprofile_enabled)
 
 
 
@@ -6820,7 +7047,7 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
 
 
 # Function to Replace: draw_game_screen
-# REASON: Use pre-rendered surfaces from TILE_LETTER_CACHE for tile letters on the board.
+# REASON: Use pre-rendered white letter surfaces for assigned blanks on the board.
 
 def draw_game_screen(screen, state):
     """
@@ -6828,10 +7055,10 @@ def draw_game_screen(screen, state):
     Prioritizes GADDAG loading message over batch progress message.
     Reads global GADDAG status directly for indicator display.
     Unpacks board_tile_counts and exchange hint info.
-    Uses cached surfaces for board tiles.
+    Uses cached surfaces for board tiles, including assigned blanks.
     """
     # --- Access global directly for indicator logic ---
-    global gaddag_loading_status, TILE_LETTER_CACHE # Add cache access
+    global gaddag_loading_status, TILE_LETTER_CACHE # Access cache
 
     # --- Unpack State Variables Needed for Drawing ---
     # (Unpack all variables previously used directly in the main loop's drawing section)
@@ -6901,10 +7128,8 @@ def draw_game_screen(screen, state):
     stats_scroll_offset = state['stats_scroll_offset']
     dropdown_open = state['dropdown_open']
     board_tile_counts = state['board_tile_counts'] # Unpack the counter
-    # --- MODIFICATION: Unpack exchange hint info ---
     best_exchange_for_hint = state.get('best_exchange_for_hint') # Use .get for safety
     best_exchange_score_for_hint = state.get('best_exchange_score_for_hint', -float('inf')) # Use .get for safety
-    # --- END MODIFICATION ---
     bag_count = len(bag) # Calculate here
 
 
@@ -6950,7 +7175,7 @@ def draw_game_screen(screen, state):
 
             # Draw tile if present
             if tiles_to_display[r][c]:
-                tile_char = tiles_to_display[r][c]
+                tile_char = tiles_to_display[r][c] # This holds the letter (e.g., 'E')
                 is_blank_on_board = (r, c) in blanks_to_display
                 is_last_played = (r, c) in last_played_highlight_coords and not replay_mode # Highlight only in active game
                 tile_bg_color = PALE_YELLOW if is_last_played else GREEN
@@ -6965,12 +7190,14 @@ def draw_game_screen(screen, state):
                     center = tile_rect.center
                     radius = SQUARE_SIZE // 2 - 3
                     pygame.draw.circle(screen, BLACK, center, radius)
-                    # --- Use Cache for Blank Letter ---
-                    text_surf = TILE_LETTER_CACHE['blank'].get('?')
+                    # --- MODIFICATION: Use Cache for Assigned Blank Letter (White) ---
+                    text_surf = TILE_LETTER_CACHE['blank_assigned'].get(tile_char) # Use tile_char here
                     if text_surf:
                         text_rect = text_surf.get_rect(center=center)
                         screen.blit(text_surf, text_rect)
-                    # --- End Use Cache ---
+                    else: # Fallback if letter somehow not in cache (shouldn't happen)
+                        print(f"Warning: Assigned blank letter '{tile_char}' not found in cache.")
+                    # --- END MODIFICATION ---
                 else:
                     # Draw regular tile background
                     pygame.draw.rect(screen, tile_bg_color, tile_rect)
@@ -7207,7 +7434,7 @@ def draw_game_screen(screen, state):
         drawn_rects['options_rect_base'] = options_rect_base
         drawn_rects['dropdown_rects_base'] = dropdown_rects_base
 
-    # Draw Dragged Tile Last (uses cached surfaces via draw_rack) (unchanged logic)
+    # Draw Dragged Tile Last (uses cached surfaces)
     if dragged_tile and drag_pos:
         player_idx_drag = dragged_tile[0]-1
         tile_val = None
@@ -7224,16 +7451,20 @@ def draw_game_screen(screen, state):
             if tile_val == ' ':
                 radius = TILE_WIDTH // 2 - 2
                 pygame.draw.circle(screen, BLACK, (center_x, center_y), radius)
+                # --- MODIFICATION: Use 'blank' cache for '?' on rack ---
                 text_surf = TILE_LETTER_CACHE['blank'].get('?')
                 if text_surf:
                     text_rect = text_surf.get_rect(center=(center_x, center_y))
                     screen.blit(text_surf, text_rect)
+                # --- END MODIFICATION ---
             else:
                 pygame.draw.rect(screen, GREEN, (draw_x, draw_y, TILE_WIDTH, TILE_HEIGHT))
+                # --- Use 'regular' cache for normal tiles ---
                 text_surf = TILE_LETTER_CACHE['regular'].get(tile_val)
                 if text_surf:
                     text_rect = text_surf.get_rect(center=(center_x, center_y))
                     screen.blit(text_surf, text_rect)
+                # --- End Use 'regular' cache ---
 
     return drawn_rects
    
@@ -7972,16 +8203,21 @@ def reset_for_play_again(is_ai, practice_mode):
 
 
 
-# ADDED: Function to contain the main game loop for profiling
+# Function to Replace: run_game_loop
+# REASON: Simplify to manage outer loop and handle final exit.
+
 def run_game_loop():
-    """Runs the main game loop, handling restarts."""
-    global main_called # Need to modify the global flag
+    """Runs the main game loop, handling restarts and final exit."""
+    global main_called # Need to access the global flag
 
     print("--- Script execution started (run_game_loop) ---")
     main_called = False # Initialize ONCE globally before the loop
     running = True
     while running: # Loop for "Play Again" / Return to Main Menu
         # Pass the current initialization status to main
+        # main() now handles initialization, game loop, and profiling internally
+        # It returns True if the user wants to go back to the menu (restart loop)
+        # It returns False if the user wants to quit the application
         should_restart = main(main_called)
 
         if should_restart:
@@ -7992,8 +8228,9 @@ def run_game_loop():
             print("--- Restarting main loop for new game/mode selection ---")
         else:
             # If main returns False, it means Quit was selected.
-            running = False # Exit the loop
+            running = False # Exit the outer loop
 
+    # --- Final Exit Logic ---
     print("--- Script exiting (run_game_loop) ---")
     pygame.quit()
     sys.exit()
@@ -8005,7 +8242,8 @@ def run_game_loop():
 
 
 # Function to Replace: main (Complete)
-# REASON: Skip event processing calls when not visualizing batch mode for performance.
+# REASON: Implement conditional profiling around the inner game loop
+#         and handle program exit cleanly by returning a flag.
 
 def main(is_initialized): # Accept initialization status as argument
     # Declare key modified globals ---
@@ -8058,10 +8296,13 @@ def main(is_initialized): # Accept initialization status as argument
     global clock
     # --- ADD Mode Constants ---
     global MODE_HVH, MODE_HVA, MODE_AVA
+    # --- ADD Profiling Global ---
+    global DEVELOPER_PROFILE_ENABLED
 
-    # --- Line Count Before This Change: 220 ---
+    # --- Line Count Before This Change: 228 ---
 
     print("--- main() function entered ---")
+    profiler = None # Initialize profiler object for this run
 
     # --- Initialization Block (Runs Once per script execution) ---
     if not is_initialized:
@@ -8080,7 +8321,7 @@ def main(is_initialized): # Accept initialization status as argument
             return False # Signal exit
 
         # --- Unpack the returned state variables ---
-        # --- MODIFICATION: Added visualize_batch to unpacking ---
+        # Unpack 42 variables total
         (game_mode, is_loaded_game, player_names, move_history, final_scores,
          replay_initial_shuffled_bag, board, tiles, scores, blanks, racks, bag,
          replay_mode, current_replay_turn, practice_mode, is_ai, human_player,
@@ -8090,19 +8331,25 @@ def main(is_initialized): # Accept initialization status as argument
          GADDAG_STRUCTURE, practice_target_moves, practice_best_move, all_moves,
          letter_checks, turn, pass_count, exchange_count, consecutive_zero_point_turns,
          last_played_highlight_coords, is_solving_endgame, gaddag_loading_status,
-         board_tile_counts, visualize_batch) = init_result # Added visualize_batch here
+         board_tile_counts, visualize_batch, cprofile_enabled) = init_result
     # --- End of Initialization Block ---
+
+    # --- Profiler Start (Conditional) ---
+    if DEVELOPER_PROFILE_ENABLED:
+        print("--- main(): cProfile ENABLED, starting profiler... ---")
+        profiler = cProfile.Profile()
+        profiler.enable()
+    # --- End Profiler Start ---
 
 
     # --- Outer Batch Loop ---
     batch_stop_requested = False # Initialize here for the outer loop scope
     num_loops = total_batch_games if is_batch_running else 1
     # Ensure current_game_initial_racks exists if needed later
-    # Use initial_racks from the most recent initialization/reset
     current_game_initial_racks = [r[:] for r in initial_racks] if 'initial_racks' in locals() and initial_racks is not None else [[], []]
     current_state = {}
-    return_to_mode_selection = False
-    was_batch_running = is_batch_running
+    return_to_mode_selection = False # Default return value
+    was_batch_running = is_batch_running # Remember if we started in batch mode
 
     for game_num in range(1, num_loops + 1):
         # --- Batch Game Reset Logic ---
@@ -8112,21 +8359,19 @@ def main(is_initialized): # Accept initialization status as argument
             if game_num > 1: # Reset state for games after the first
                 reset_result = reset_game_state(initial_game_config)
                 if reset_result is None: print(f"FATAL: Failed to reset state for game {game_num}. Stopping batch."); batch_stop_requested = True; break # Set flag and break
-                # --- MODIFICATION: Unpack board_tile_counts ---
                 (board, tiles, racks, blanks, scores, turn, first_play, bag, move_history, pass_count, exchange_count, consecutive_zero_point_turns, last_played_highlight_coords, is_solving_endgame, board_tile_counts) = reset_result # Unpack counter
                 is_ai = initial_game_config.get('is_ai', [False, False]); player_names = initial_game_config.get('player_names', ["P1", "P2"])
                 current_game_initial_racks = [r[:] for r in racks] # Capture new initial racks for this game
                 all_moves = [] # Reset all_moves for new batch game
                 current_replay_turn = 0 # Reset replay turn for new batch game
-                # --- Retrieve visualize_batch from config ---
                 visualize_batch = initial_game_config.get('visualize_batch', False)
+                cprofile_enabled = initial_game_config.get('cprofile_enabled', False) # Retrieve cProfile setting
         # --- Non-Batch Game Reset Logic (for "Play Again") ---
         elif is_initialized and not is_batch_running: # This handles "Play Again"
             reset_result = reset_for_play_again(is_ai, practice_mode)
             if reset_result is None:
                 print("Error resetting game for Play Again. Exiting.")
                 return False # Signal exit
-            # --- MODIFICATION: Unpack board_tile_counts ---
             (board, tiles, scores, blanks, bag, racks, initial_racks,
              current_game_initial_racks, first_play, turn, replay_mode,
              move_history, pass_count, exchange_count,
@@ -8136,6 +8381,7 @@ def main(is_initialized): # Accept initialization status as argument
              board_tile_counts) = reset_result
             current_replay_turn = 0
             visualize_batch = False # Not applicable in non-batch
+            # cprofile_enabled is already set from the initial run
 
 
         # --- Reset Common Per-Game Variables & Initialize State Dictionary ---
@@ -8165,6 +8411,7 @@ def main(is_initialized): # Accept initialization status as argument
             'current_replay_turn': current_replay_turn, # *** Explicitly add current_replay_turn ***
             'board_tile_counts': board_tile_counts, # Add the counter
             'visualize_batch': visualize_batch, # Add the setting
+            'cprofile_enabled': cprofile_enabled, # Carry over cProfile setting
             # UI / Temporary State (from reset_vars)
             **reset_vars, # Unpack the reset dictionary
             # Add other necessary state not covered by reset_vars
@@ -8172,7 +8419,6 @@ def main(is_initialized): # Accept initialization status as argument
             'replay_start_rect': replay_start_rect, 'replay_prev_rect': replay_prev_rect,
             'replay_next_rect': replay_next_rect, 'replay_end_rect': replay_end_rect,
             'bag_count': len(bag) # Calculate initial bag count
-            # REMOVED 'batch_stop_requested' from here
         }
         print("--- main(): Initialized current_state dictionary. ---")
         # --- End Common Variable Resets & State Dictionary Init ---
@@ -8181,14 +8427,10 @@ def main(is_initialized): # Accept initialization status as argument
         # --- Inner Game Loop ---
         # Use the running_inner flag from the state dictionary
         while current_state['running_inner']:
-            # --- MODIFICATION: Check outer flag directly ---
-            if batch_stop_requested: # Check the outer flag
+            if batch_stop_requested:
                 print(f"--- DEBUG: Inner loop start check: batch_stop_requested is TRUE. Breaking inner loop. ---") # DEBUG
                 current_state['running_inner'] = False # Stop inner loop if outer flag is set
                 break
-            # else: # Optional debug
-            #    print(f"--- DEBUG: Inner loop start check: batch_stop_requested is FALSE. Continuing inner loop. ---") # DEBUG
-
 
             # --- Deferred 8-Letter Practice Move Generation ---
             current_state = handle_deferred_practice_init(current_state)
@@ -8198,13 +8440,10 @@ def main(is_initialized): # Accept initialization status as argument
                 break # Exit if init failed
 
             # --- Game State Update / Turn Logic ---
-            # --- MODIFICATION: Only call update_preview_score when needed ---
             if current_state['typing'] and current_state['preview_score_enabled']:
                 current_state['current_preview_score'] = update_preview_score(current_state)
             else:
-                # Ensure score is 0 if not typing or preview disabled
                 current_state['current_preview_score'] = 0
-            # --- END MODIFICATION ---
 
             current_state = handle_turn_start_updates(current_state)
             current_state = handle_ai_turn_trigger(current_state)
@@ -8224,19 +8463,20 @@ def main(is_initialized): # Accept initialization status as argument
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%% EVENT PROCESSING %%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            # --- MODIFICATION START: Conditional Event Processing ---
             if should_process_events_and_draw:
                 event_result_state = process_game_events(current_state, current_state['drawn_rects'])
-                # Update state dictionary based on event processing results
                 current_state.update(event_result_state)
                 # Update local control flags based on the returned state
                 return_to_mode_selection = current_state['return_to_mode_selection']
-                # --- MODIFICATION: Update outer flag based on return_to_mode_selection ---
+                # Update outer flag based on return_to_mode_selection
                 if return_to_mode_selection:
-                    # --- ADD DEBUG PRINT ---
                     print(f"--- DEBUG: Setting batch_stop_requested = True because return_to_mode_selection is TRUE (event: {pygame.event.event_name(event.type) if 'event' in locals() else 'N/A'}). ---")
                     batch_stop_requested = True # Set outer flag if user explicitly wants to stop/go back
-            # --- MODIFICATION END ---
+                # --- MODIFICATION: Check if Quit was requested ---
+                if not current_state['running_inner'] and not return_to_mode_selection:
+                    # This means Quit was selected, stop the outer batch loop too
+                    print("--- DEBUG: Quit detected in event processing. Setting batch_stop_requested = True. ---")
+                    batch_stop_requested = True
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%% END EVENT PROCESSING %%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -8250,21 +8490,19 @@ def main(is_initialized): # Accept initialization status as argument
 
 
             # --- Practice Mode Restart Logic ---
-            # --- MODIFICATION: Explicitly prevent restart check in batch ---
             if not current_state['is_batch_running']:
                 current_state = handle_practice_restart(current_state)
-                # --- REMOVED check and setting of batch_stop_requested ---
-            # --- END MODIFICATION ---
+                # If restart failed, it sets running_inner=False and return_to_mode_selection=True
+                if not current_state['running_inner'] and current_state['return_to_mode_selection']:
+                    batch_stop_requested = True # Also stop outer loop if practice restart fails
 
 
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%%%% DRAWING CALL %%%%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            # --- MODIFICATION START: Conditional Drawing ---
             if should_process_events_and_draw: # Use the same flag
                 current_state['drawn_rects'] = draw_game_screen(screen, current_state)
                 pygame.display.flip()
-            # --- MODIFICATION END ---
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%% END DRAWING CALL %%%%%%%%%%%%%%%%%%%%%%
             #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -8277,10 +8515,8 @@ def main(is_initialized): # Accept initialization status as argument
 
         # --- End of Inner Game Loop ---
 
-        # --- ADD DEBUG PRINT ---
         print(f"--- DEBUG: End of outer loop iteration for game {game_num}. batch_stop_requested = {batch_stop_requested} ---")
 
-        # *** MOVED BREAK CHECK HERE ***
         if batch_stop_requested:
             print("--- Batch run stopping due to user request or error ---")
             break # Exit the outer 'for game_num...' loop
@@ -8288,30 +8524,39 @@ def main(is_initialized): # Accept initialization status as argument
     # --- End of Outer Batch Loop ---
 
     # --- Save batch stats after loop finishes ---
-    # *** Use the initial was_batch_running flag and check current_state exists ***
     if was_batch_running and current_state and current_state.get('batch_results'):
         batch_summary_filename = f"{current_state.get('initial_game_config', {}).get('batch_filename_prefix', 'UNKNOWN-BATCH')}.txt"
         save_batch_statistics(current_state['batch_results'], current_state.get('player_names', ["P1","P2"]), batch_summary_filename)
-        # *** Set return_to_mode_selection to True after batch save ***
+        # Set return_to_mode_selection to True after batch save
         return_to_mode_selection = True # Ensure we go back to menu
+
+    # --- Profiler Stop & Results (Conditional) ---
+    if profiler:
+        profiler.disable()
+        print("\n--- main(): cProfile STOPPED. Processing results... ---")
+        profile_filename = 'scrabble_profile.prof'
+        profiler.dump_stats(profile_filename)
+        print(f"--- Profiling Complete: Data saved to {profile_filename} ---")
+        print("\nTo visualize the results, install snakeviz (`pip install snakeviz`)")
+        print(f"Then run the following command in your terminal:")
+        print(f"  snakeviz {profile_filename}")
+        # Optional: Print basic stats to console
+        print("\n--- Basic Profile Stats ---")
+        try:
+            p = pstats.Stats(profile_filename)
+            p.strip_dirs().sort_stats('cumulative').print_stats(20) # Print top 20 cumulative time functions
+        except FileNotFoundError:
+            print(f"Error: Profile file '{profile_filename}' not found.")
+        except Exception as e:
+            print(f"Error processing profile stats: {e}")
+    # --- End Profiler Stop ---
 
     print("--- main(): Exited main game loop(s). ---")
 
-    # --- MODIFIED FINAL RETURN LOGIC ---
-    # If we started in batch mode, always return True to go back to menu
-    if was_batch_running:
-        print("--- main(): Batch run finished. Returning to mode selection... ---")
-        return True # Signal restart
+    # Return flag indicating whether to restart (True) or quit (False)
+    return return_to_mode_selection
 
-    # Otherwise (not batch mode), use the flag set by events
-    elif return_to_mode_selection:
-        print("--- main(): Returning to mode selection... ---")
-        return True # Signal restart
-    else:
-        print("--- main(): Quitting pygame and exiting. ---")
-        return False # Signal exit
-
-# --- Line Count After This Change: 228 ---
+# --- Line Count After This Change: ~260 (due to added comments/prints) ---
 
 
 
@@ -8319,24 +8564,8 @@ def main(is_initialized): # Accept initialization status as argument
 
 
 
-# MODIFIED: Program Entry Point for Profiling
+# MODIFIED: Program Entry Point - Simplified
 if __name__ == "__main__":
-    import cProfile
-    import pstats
-    import io # Needed for pstats output redirection if desired
-
-    profile_filename = 'scrabble_profile.prof'
-    print(f"--- Starting Profiling: Output will be saved to {profile_filename} ---")
-
-    # Profile the main game loop function
-    cProfile.run('run_game_loop()', filename=profile_filename)
-
-    print(f"--- Profiling Complete: Data saved to {profile_filename} ---")
-    print("\nTo visualize the results, install snakeviz (`pip install snakeviz`)")
-    print(f"Then run the following command in your terminal:")
-    print(f"  snakeviz {profile_filename}")
-
-    # Optional: Print basic stats to console
-    print("\n--- Basic Profile Stats ---")
-    p = pstats.Stats(profile_filename)
-    p.strip_dirs().sort_stats('cumulative').print_stats(20) # Print top 20 cumulative time functions
+    # All profiling logic is now handled within main() and run_game_loop()
+    run_game_loop()
+    # The run_game_loop function handles the final pygame.quit() and sys.exit()
