@@ -1,7 +1,4 @@
 
-
-
-
 #python
 #Scrabble 26APR25 Cython V3
 
@@ -1053,7 +1050,7 @@ def is_word_length_allowed(word_len, number_checks):
 
 
 # Function to Replace: mode_selection_screen
-# REASON: Add Developer Tools button, dialog handling, and visualize_batch setting.
+# REASON: Move Developer Tools button to bottom-left.
 
 def mode_selection_screen():
     """Display and handle the game mode selection screen, including Load Game via text input and Developer Tools."""
@@ -1082,12 +1079,11 @@ def mode_selection_screen():
     showing_load_input = False; load_filename_input = ""; load_input_active = False
     load_confirm_button_rect = None; load_input_rect = None; load_cancel_button_rect = None
 
-    # --- NEW: Developer Tools State ---
+    # Developer Tools State
     showing_dev_tools_dialog = False
     visualize_batch_checked = False # Default to False (unchecked)
     dev_tools_visualize_rect = None # Rect for checkbox click detection
     dev_tools_close_rect = None # Rect for close button click detection
-    # --- END NEW ---
 
     print("--- mode_selection_screen(): Entering main loop (while selected_mode is None:)... ---")
     loop_count = 0
@@ -1104,11 +1100,15 @@ def mode_selection_screen():
         load_game_button_rect = pygame.Rect(play_later_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
         batch_game_button_rect = pygame.Rect(load_game_button_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
         start_game_button_rect = pygame.Rect(batch_game_button_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
-        # --- NEW: Developer Tools Button Position ---
-        # Place it to the left of Start Game
+        # --- MODIFICATION: Developer Tools Button Position (Bottom Left) ---
         dev_tools_button_width = 120 # Slightly wider for text
-        dev_tools_button_rect = pygame.Rect(start_game_button_rect.left - BUTTON_GAP - dev_tools_button_width, play_later_rect.top, dev_tools_button_width, BUTTON_HEIGHT)
-        # --- END NEW ---
+        dev_tools_button_rect = pygame.Rect(
+            10, # Left edge padding
+            play_later_rect.top, # Align vertically with other bottom buttons
+            dev_tools_button_width,
+            BUTTON_HEIGHT
+        )
+        # --- END MODIFICATION ---
 
 
         # Calculate Load Input Field/Button Positions unconditionally
@@ -1162,7 +1162,7 @@ def mode_selection_screen():
         for event in pygame.event.get():
             if event.type == pygame.QUIT: pygame.quit(); sys.exit()
 
-            # --- NEW: Handle Dev Tools Dialog FIRST ---
+            # Handle Dev Tools Dialog FIRST
             if showing_dev_tools_dialog:
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     x, y = event.pos
@@ -1172,17 +1172,10 @@ def mode_selection_screen():
                     # Close button click
                     elif dev_tools_close_rect and dev_tools_close_rect.collidepoint(x, y):
                         showing_dev_tools_dialog = False
-                    # Click outside dialog (optional: close dialog)
-                    # else:
-                    #    dialog_width, dialog_height = 350, 180
-                    #    dialog_rect = pygame.Rect((WINDOW_WIDTH - dialog_width) // 2, (WINDOW_HEIGHT - dialog_height) // 2, dialog_width, dialog_height)
-                    #    if not dialog_rect.collidepoint(x,y):
-                    #         showing_dev_tools_dialog = False
                 elif event.type == pygame.KEYDOWN:
                      if event.key == pygame.K_ESCAPE: # Allow Esc to close
                           showing_dev_tools_dialog = False
                 continue # Skip other event handling when dialog is open
-            # --- END NEW ---
 
             # Handle Load Game Input if active
             if showing_load_input:
@@ -1260,10 +1253,9 @@ def mode_selection_screen():
                     elif simulation_checkbox_rect.collidepoint(x, y):
                         use_ai_simulation_checked = not use_ai_simulation_checked
 
-                    # --- NEW: Handle Developer Tools Button Click ---
+                    # Handle Developer Tools Button Click
                     elif dev_tools_button_rect.collidepoint(x, y):
                         showing_dev_tools_dialog = True
-                    # --- END NEW ---
 
                     # Handle Batch Game Button Click
                     elif batch_game_button_rect.collidepoint(x, y):
@@ -1276,9 +1268,8 @@ def mode_selection_screen():
                             if num_games is not None:
                                 print(f"--- mode_selection_screen(): Starting batch of {num_games} games ---")
                                 selected_mode = "BATCH_MODE"
-                                # --- MODIFICATION: Include visualize_batch_checked ---
+                                # Include visualize_batch_checked
                                 loaded_game_data = (current_selected_game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked)
-                                # --- END MODIFICATION ---
                                 break # Exit mode selection loop
                             else:
                                 print("--- mode_selection_screen(): Batch game setup cancelled ---")
@@ -1404,14 +1395,13 @@ def mode_selection_screen():
         hover = start_game_button_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else BUTTON_COLOR; pygame.draw.rect(screen, color, start_game_button_rect)
         start_game_text = button_font.render("Start Game", True, BLACK); start_game_text_rect = start_game_text.get_rect(center=start_game_button_rect.center); screen.blit(start_game_text, start_game_text_rect)
 
-        # --- NEW: Draw Developer Tools Button ---
+        # Draw Developer Tools Button (Bottom Left)
         hover = dev_tools_button_rect.collidepoint(pygame.mouse.get_pos())
         color = BUTTON_HOVER if hover else BUTTON_COLOR
         pygame.draw.rect(screen, color, dev_tools_button_rect)
         dev_tools_text = button_font.render("Developer Tools", True, BLACK)
         dev_tools_text_rect = dev_tools_text.get_rect(center=dev_tools_button_rect.center)
         screen.blit(dev_tools_text, dev_tools_text_rect)
-        # --- END NEW ---
 
 
         # Draw Load Game Input Field (if active)
@@ -1475,10 +1465,9 @@ def mode_selection_screen():
             go_rect = pygame.Rect(dialog_x + 50, dialog_y + 220, 100, 30); cancel_rect = pygame.Rect(dialog_x + 160, dialog_y + 220, 100, 30); pygame.draw.rect(screen, BUTTON_COLOR, go_rect); pygame.draw.rect(screen, BUTTON_COLOR, cancel_rect)
             go_text = button_font.render("Go", True, BLACK); cancel_text = button_font.render("Cancel", True, BLACK); screen.blit(go_text, go_text.get_rect(center=go_rect.center)); screen.blit(cancel_text, cancel_text.get_rect(center=cancel_rect.center))
 
-        # --- NEW: Draw Developer Tools Dialog ---
+        # Draw Developer Tools Dialog
         if showing_dev_tools_dialog:
             dev_tools_visualize_rect, dev_tools_close_rect = draw_dev_tools_dialog(visualize_batch_checked)
-        # --- END NEW ---
 
 
         # --- Display Update ---
@@ -1492,14 +1481,16 @@ def mode_selection_screen():
     if selected_mode == "LOADED_GAME":
         return selected_mode, loaded_game_data
     elif selected_mode == "BATCH_MODE":
-        # --- MODIFICATION: Return visualize_batch_checked ---
+        # Return visualize_batch_checked
         return selected_mode, loaded_game_data # loaded_game_data already contains visualize_batch_checked
-        # --- END MODIFICATION ---
     else:
-        # --- MODIFICATION: Return visualize_batch_checked (though not used here) ---
+        # Return visualize_batch_checked (though not used here)
         # Add visualize_batch_checked to the tuple for consistency, even if not used for non-batch modes
         return selected_mode, (player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state, visualize_batch_checked)
-        # --- END MODIFICATION ---
+
+
+
+
 
 
 def draw_options_menu(turn, dropdown_open, bag_count):
@@ -2455,13 +2446,14 @@ def draw_arrow(row, col, direction):
 
 
 # Function to Replace: generate_all_moves_gaddag
-# REASON: Restore passing NumPy array derived from Counter to _gaddag_traverse_cython
+# REASON: Revert initial calls to pass copies of initial_tiles list
 
 def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
     """
     Generates ALL valid Scrabble moves using GADDAG traversal.
     Converts rack Counter to C array (using numpy.array with dtype=np.intc)
     before calling Cython. Passes the GADDAG root node to Cython.
+    Passes copies of initial tile lists.
     """
     # Removed global DAWG access - assume DAWG is accessible if needed by cross_check
     global gaddag_loading_status
@@ -2488,14 +2480,14 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
     original_tiles_state = [row[:] for row in tiles]
     full_rack_size = len(rack)
 
-    # --- REVERT: Convert Python Counter to NumPy C array ---
+    # --- Convert Python Counter to NumPy C array ---
     rack_counts_py = Counter(rack)
     rack_counts_c_arr = np.zeros(27, dtype=np.intc) # Use np.intc (platform C int)
     for i in range(26):
         letter = chr(ord('A') + i)
         rack_counts_c_arr[i] = rack_counts_py.get(letter, 0)
     rack_counts_c_arr[26] = rack_counts_py.get(' ', 0) # Index 26 for blank
-    # --- END REVERT ---
+    # --- END Convert ---
 
     # Precompute Cross-Check Sets (using the global DAWG object)
     cross_check_sets = {}
@@ -2537,9 +2529,7 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
 
     # --- Initiate Traversal using NumPy array ---
     processed_adjacent_starts = set()
-    # --- REVERT: Use NumPy array copy ---
     initial_rack_counts_c_copy = rack_counts_c_arr.copy() # numpy copy
-    # --- END REVERT ---
     # --- gaddag_root is already passed as argument to this function ---
 
     for r_anchor, c_anchor in anchors:
@@ -2552,41 +2542,41 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
             if count > 0 and tile_letter != ' ':
                 if tile_letter in gaddag_root.children:
                     next_node = gaddag_root.children[tile_letter]
-                    # --- REVERT: Use NumPy array copy ---
                     next_rack_counts_c_arr_s1 = rack_counts_c_arr.copy() # numpy copy
                     letter_idx_s1 = ord(tile_letter) - ord('A')
                     next_rack_counts_c_arr_s1[letter_idx_s1] -= 1
-                    # --- END REVERT ---
+                    # --- REVERT: Create list copy for call ---
                     initial_tiles = [(r_anchor, c_anchor, tile_letter, False, True)]
+                    # --- END REVERT ---
 
                     if tile_letter in allowed_v:
-                         # --- REVERT: Pass NumPy array ---
+                         # --- REVERT: Pass list copy ---
                          _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_s1, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'H', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
                          # --- END REVERT ---
 
                     if tile_letter in allowed_h:
-                         # --- REVERT: Pass NumPy array ---
+                         # --- REVERT: Pass list copy ---
                          _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_s1, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'V', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
                          # --- END REVERT ---
 
         # Handle blank for Strategy 1
         if rack_counts_py[' '] > 0:
             if ' ' in allowed_h or ' ' in allowed_v:
-                # --- REVERT: Use NumPy array copy ---
                 next_rack_counts_c_arr_blank = rack_counts_c_arr.copy() # numpy copy
                 next_rack_counts_c_arr_blank[26] -= 1
-                # --- END REVERT ---
                 for assigned_letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
                     if assigned_letter in gaddag_root.children:
                         next_node = gaddag_root.children[assigned_letter]
+                        # --- REVERT: Create list copy for call ---
                         initial_tiles = [(r_anchor, c_anchor, assigned_letter, True, True)]
+                        # --- END REVERT ---
                         if ' ' in allowed_v:
-                            # --- REVERT: Pass NumPy array ---
-                            _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_blank, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'H', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                            # --- REVERT: Pass list copy ---
+                            _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_blank.copy(), tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'H', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
                             # --- END REVERT ---
                         if ' ' in allowed_h:
-                            # --- REVERT: Pass NumPy array ---
-                            _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_blank, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'V', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                            # --- REVERT: Pass list copy ---
+                            _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_blank.copy(), tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'V', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
                             # --- END REVERT ---
 
         # --- Strategy 2 ---
@@ -2600,11 +2590,13 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
                          processed_adjacent_starts.add(adj_pos)
                          if existing_tile_letter in gaddag_root.children:
                             next_node = gaddag_root.children[existing_tile_letter]
+                            # --- REVERT: Create list copy for call ---
                             initial_tiles = [(nr, nc, existing_tile_letter, False, False)]
+                            # --- END REVERT ---
                             start_axis = 'V' if dr != 0 else 'H'
-                            # --- REVERT: Pass NumPy array copy ---
-                            _gaddag_traverse_cython(anchor_pos, initial_rack_counts_c_copy, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles[:]), False, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
-                            _gaddag_traverse_cython(anchor_pos, initial_rack_counts_c_copy, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles[:]), True, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                            # --- REVERT: Pass list copies ---
+                            _gaddag_traverse_cython(anchor_pos, initial_rack_counts_c_copy, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), False, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                            _gaddag_traverse_cython(anchor_pos, initial_rack_counts_c_copy, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
                             # --- END REVERT ---
 
     # Post-processing (unchanged)
