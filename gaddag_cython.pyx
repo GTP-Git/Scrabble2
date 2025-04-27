@@ -1,21 +1,28 @@
-#Scrabble 26APR25 Cython V2
+#Scrabble 26APR25 Cython V3
 
 
 # gaddag_cython.pyx
 # cython: language_level=3
 
 import cython # To use decorators like @cython.locals
-import numpy as np # Keep NumPy import as it's used in _gaddag_traverse
+# --- RE-ADD: NumPy import ---
+import numpy as np
+# --- END RE-ADD ---
 
 # Import necessary Python modules/classes
 from collections import Counter
 
 # Import helpers and constants FROM scrabble_helpers
 from scrabble_helpers import (
-    DAWG, GRID_SIZE, CENTER_SQUARE, TILE_DISTRIBUTION,
+    DAWG, # Keep DAWG for is_valid_play
+    # GRID_SIZE, # REMOVED import of Python GRID_SIZE
+    CENTER_SQUARE, TILE_DISTRIBUTION,
     RED, PINK, BLUE, LIGHT_BLUE, LETTERS,
-    get_coord, evaluate_leave, get_anchor_points, Gaddag, GaddagNode
+    get_coord, evaluate_leave, get_anchor_points, Gaddag, GaddagNode # Ensure GaddagNode is imported
 )
+
+# --- Define GRID_SIZE as a C constant ---
+DEF GRID_SIZE_C = 15
 
 # Keep as cdef (internal helper)
 # REMOVED @cython.locals
@@ -29,16 +36,17 @@ cdef int get_char_index(str letter):
         return -1 # Indicate error
     return index
 
-# --- Cython version using C array for rack counts ---
-# REMOVED @cython.locals decorator from _gaddag_traverse
+# --- REVERT: Back to Cython version using C array for rack counts ---
 def _gaddag_traverse(
     anchor_pos,
+    # --- REVERT: Parameter back to memoryview ---
     int[:] rack_counts_c, # Memory view of incoming C int array
+    # --- END REVERT ---
     tiles,
     board,
     blanks,
     cross_check_sets,
-    gaddag_node, # Current node in GADDAG traversal
+    gaddag_node, # Current node in GADDAG traversal (implicitly object)
     object gaddag_root_node, # Root of the GADDAG structure
     current_word_tiles,
     bint is_reversed,
@@ -48,7 +56,7 @@ def _gaddag_traverse(
     original_tiles_state,
     bint is_first_play,
     int full_rack_size,
-    int max_len=GRID_SIZE,
+    int max_len=GRID_SIZE_C,
     int depth=0
 ):
     """ Recursive helper using C array for rack counts """
@@ -57,18 +65,25 @@ def _gaddag_traverse(
     cdef object move_blanks_coords, newly_placed_coords, all_words_formed_details
     cdef object primary_word_tiles, primary_word_str, start_pos, orientation
     cdef object word_with_blanks_list, word_with_blanks, leave, move_details_dict
-    cdef object letter, next_node, next_pos, existing_tile, cross_axis
+    cdef str letter
+    cdef object next_node # Reverted type back to object
+    cdef object next_pos, existing_tile, cross_axis
     cdef object allowed_letters, tile_on_anchor
+    # --- REVERT: Re-add C array declarations ---
     cdef int[:] current_rack_counts_c # Memory view for current level
     cdef int[27] temp_rack_counts_c_arr # Actual C array for modification
+    # --- END REVERT ---
     cdef int i # Loop variable
     cdef object r_last_py, c_last_py, _ign1, _ign2, _ign3 # Intermediate Python objects
     cdef object last_elem # Variable for explicit check
+    # --- REVERT: Re-add next_rack_np_arr declaration ---
     cdef object next_rack_np_arr # To hold the new numpy array
+    # --- END REVERT ---
     cdef int r_last, c_last, next_r, next_c, anchor_r, anchor_c, ref_r, ref_c, score
     cdef bint is_valid, is_bingo, just_crossed_separator
+    # --- REVERT: Re-add letter_idx, blank_idx ---
     cdef int letter_idx, blank_idx
-    # --- ADDED: Intermediate Python objects for anchor ---
+    # --- END REVERT ---
     cdef object anchor_r_obj, anchor_c_obj
 
     if depth > 20: return
@@ -102,7 +117,7 @@ def _gaddag_traverse(
                 temp_blanks = set(blanks); move_blanks_coords = set(); newly_placed_coords = set()
                 for r, c, letter_obj, is_blank_obj, is_new_obj in current_word_tiles:
                     if is_new_obj:
-                        if 0 <= r < GRID_SIZE and 0 <= c < GRID_SIZE:
+                        if 0 <= r < GRID_SIZE_C and 0 <= c < GRID_SIZE_C:
                             temp_tiles[r][c] = letter_obj; newly_placed_coords.add((r, c))
                             if is_blank_obj: temp_blanks.add((r, c)); move_blanks_coords.add((r, c))
 
@@ -151,10 +166,12 @@ def _gaddag_traverse(
                         word_with_blanks_list.append(w_letter.lower() if is_blank_in_word else w_letter.upper())
                     word_with_blanks = "".join(word_with_blanks_list)
 
+                    # --- REVERT: Use C array for leave ---
                     leave = []
                     for i in range(26):
                         leave.extend([chr(ord('A') + i)] * rack_counts_c[i])
                     leave.extend([' '] * rack_counts_c[26])
+                    # --- END REVERT ---
 
                     move_details_dict = {
                         'positions': [(t[0], t[1], t[2]) for t in primary_word_tiles], 'blanks': move_blanks_coords,
@@ -168,6 +185,8 @@ def _gaddag_traverse(
     current_rack_counts_c = rack_counts_c
     blank_idx = 26
 
+    # The 'letter' variable in the loop will now use the 'cdef str' type
+    # The 'next_node' variable will use the 'cdef object' type
     for letter, next_node in gaddag_node.children.items():
         if letter == Gaddag.SEPARATOR:
             if is_reversed:
@@ -183,7 +202,7 @@ def _gaddag_traverse(
             continue
 
         next_r, next_c = -1, -1
-        # --- MODIFICATION START: Use C integers for coordinate calculation ---
+        # --- Use C integers for coordinate calculation ---
         if is_reversed:
             # Use C integers r_last, c_last directly
             if current_axis == 'H': next_r, next_c = r_last, c_last - 1
@@ -202,6 +221,7 @@ def _gaddag_traverse(
                       tile_on_anchor = (t_r, t_c); break
 
             # Determine if separator was just crossed using C integers
+            # The just_crossed_separator variable is now typed as bint
             just_crossed_separator = False
             if len(current_word_tiles) > 0:
                 if current_axis == 'H':
@@ -216,10 +236,10 @@ def _gaddag_traverse(
             # Calculate next position using C integers
             if current_axis == 'H': next_r, next_c = ref_r, ref_c + 1
             else:                   next_r, next_c = ref_r + 1, ref_c
-        # --- MODIFICATION END ---
+        # --- End coordinate calculation modification ---
 
 
-        if not (0 <= next_r < GRID_SIZE and 0 <= next_c < GRID_SIZE): continue
+        if not (0 <= next_r < GRID_SIZE_C and 0 <= next_c < GRID_SIZE_C): continue
 
         next_pos = (next_r, next_c)
         existing_tile = tiles[next_r][next_c]
@@ -228,16 +248,21 @@ def _gaddag_traverse(
             cross_axis = 'V' if current_axis == 'H' else 'H'
             allowed_letters = cross_check_sets.get(next_pos, {}).get(cross_axis, set())
 
+            # --- REVERT: Use letter_idx ---
             letter_idx = get_char_index(letter)
             if letter_idx == -1: continue
+            # --- END REVERT ---
 
             # Option 1a: Use regular tile
+            # --- REVERT: Use C array logic ---
             if current_rack_counts_c[letter_idx] > 0 and letter in allowed_letters:
-                # Create and pass new NumPy array
+                # Create and modify temporary C array
                 for i in range(27):
                     temp_rack_counts_c_arr[i] = current_rack_counts_c[i]
                 temp_rack_counts_c_arr[letter_idx] -= 1
+                # Create NumPy array from C array
                 next_rack_np_arr = np.array(temp_rack_counts_c_arr, dtype=np.intc)
+                # Pass the NumPy array
                 _gaddag_traverse(
                     anchor_pos, next_rack_np_arr, tiles, board, blanks, cross_check_sets,
                     next_node,
@@ -246,14 +271,18 @@ def _gaddag_traverse(
                     is_reversed, current_axis, all_found_moves, unique_move_signatures,
                     original_tiles_state, is_first_play, full_rack_size, max_len, depth + 1
                 )
+            # --- END REVERT ---
 
             # Option 1b: Use blank tile
+            # --- REVERT: Use C array logic ---
             if current_rack_counts_c[blank_idx] > 0 and ' ' in allowed_letters:
-                # Create and pass new NumPy array
+                # Create and modify temporary C array
                 for i in range(27):
                     temp_rack_counts_c_arr[i] = current_rack_counts_c[i]
                 temp_rack_counts_c_arr[blank_idx] -= 1
+                # Create NumPy array from C array
                 next_rack_np_arr = np.array(temp_rack_counts_c_arr, dtype=np.intc)
+                # Pass the NumPy array
                 _gaddag_traverse(
                     anchor_pos, next_rack_np_arr, tiles, board, blanks, cross_check_sets,
                     next_node,
@@ -262,9 +291,10 @@ def _gaddag_traverse(
                     is_reversed, current_axis, all_found_moves, unique_move_signatures,
                     original_tiles_state, is_first_play, full_rack_size, max_len, depth + 1
                 )
+            # --- END REVERT ---
         # Case 2: Square has matching existing tile
         elif existing_tile == letter:
-            # Pass the existing memory view
+            # Pass the existing memory view (no change needed here)
             _gaddag_traverse(
                 anchor_pos, current_rack_counts_c, tiles, board, blanks, cross_check_sets,
                 next_node,
@@ -291,7 +321,7 @@ cdef list find_cross_word(tuple tile, list tiles, str main_orientation):
         min_row = r;
         while min_row > 0 and tiles[min_row - 1][c]: min_row -= 1
         max_row = r;
-        while max_row < GRID_SIZE - 1 and tiles[max_row + 1][c]: max_row += 1
+        while max_row < GRID_SIZE_C - 1 and tiles[max_row + 1][c]: max_row += 1
         if max_row > min_row:
             cross_word = []
             for rr_cw in range(min_row, max_row + 1):
@@ -301,7 +331,7 @@ cdef list find_cross_word(tuple tile, list tiles, str main_orientation):
         min_col = c;
         while min_col > 0 and tiles[r][min_col - 1]: min_col -= 1
         max_col = c;
-        while max_col < GRID_SIZE - 1 and tiles[r][max_col + 1]: max_col += 1
+        while max_col < GRID_SIZE_C - 1 and tiles[r][max_col + 1]: max_col += 1
         if max_col > min_col:
             cross_word = []
             for cc_cw in range(min_col, max_col + 1):
@@ -334,7 +364,7 @@ cdef tuple find_main_word(list new_tiles, list tiles):
                 if c_nt < min_col: min_col = c_nt
                 if c_nt > max_col: max_col = c_nt
         while min_col > 0 and tiles[row][min_col - 1]: min_col -= 1
-        while max_col < GRID_SIZE - 1 and tiles[row][max_col + 1]: max_col += 1
+        while max_col < GRID_SIZE_C - 1 and tiles[row][max_col + 1]: max_col += 1
         main_word = []
         for c_mw in range(min_col, max_col + 1):
             if tiles[row][c_mw]:
@@ -349,7 +379,7 @@ cdef tuple find_main_word(list new_tiles, list tiles):
                 if r_nt < min_row: min_row = r_nt
                 if r_nt > max_row: max_row = r_nt
         while min_row > 0 and tiles[min_row - 1][col]: min_row -= 1
-        while max_row < GRID_SIZE - 1 and tiles[max_row + 1][col]: max_row += 1
+        while max_row < GRID_SIZE_C - 1 and tiles[max_row + 1][col]: max_row += 1
         main_word = []
         for r_mw in range(min_row, max_row + 1):
             if tiles[r_mw][col]:
@@ -482,7 +512,7 @@ cpdef tuple is_valid_play(list word_positions, list tiles, bint is_first_play, i
         r = rows_list[0]; min_col = min(cols_list); max_col = max(cols_list)
         temp_min_col = min_col; temp_max_col = max_col
         while temp_min_col > 0 and tiles[r][temp_min_col - 1]: temp_min_col -= 1
-        while temp_max_col < GRID_SIZE - 1 and tiles[r][temp_max_col + 1]: temp_max_col += 1
+        while temp_max_col < GRID_SIZE_C - 1 and tiles[r][temp_max_col + 1]: temp_max_col += 1
         for c in range(temp_min_col, temp_max_col + 1):
             if not tiles[r][c]:
                 return False, False
@@ -490,7 +520,7 @@ cpdef tuple is_valid_play(list word_positions, list tiles, bint is_first_play, i
         c = cols_list[0]; min_row = min(rows_list); max_row = max(rows_list)
         temp_min_row = min_row; temp_max_row = max_row
         while temp_min_row > 0 and tiles[temp_min_row - 1][c]: temp_min_row -= 1
-        while temp_max_row < GRID_SIZE - 1 and tiles[temp_max_row + 1][c]: temp_max_row += 1
+        while temp_max_row < GRID_SIZE_C - 1 and tiles[temp_max_row + 1][c]: temp_max_row += 1
         for r in range(temp_min_row, temp_max_row + 1):
             if not tiles[r][c]:
                 return False, False
@@ -532,7 +562,7 @@ cpdef tuple is_valid_play(list word_positions, list tiles, bint is_first_play, i
         for r, c in newly_placed_positions_coords:
             for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                 nr, nc = r + dr, c + dc
-                if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE and original_tiles[nr][nc]:
+                if 0 <= nr < GRID_SIZE_C and 0 <= nc < GRID_SIZE_C and original_tiles[nr][nc]:
                     connects = True; break
             if connects: break
         if not connects:
