@@ -39,7 +39,7 @@ def _gaddag_traverse(
     blanks,
     cross_check_sets,
     gaddag_node, # Current node in GADDAG traversal
-    object gaddag_root_node, # <<< ADDED: Root of the GADDAG structure
+    object gaddag_root_node, # Root of the GADDAG structure
     current_word_tiles,
     bint is_reversed,
     current_axis,
@@ -68,9 +68,8 @@ def _gaddag_traverse(
     cdef int r_last, c_last, next_r, next_c, anchor_r, anchor_c, ref_r, ref_c, score
     cdef bint is_valid, is_bingo, just_crossed_separator
     cdef int letter_idx, blank_idx
-
-    # --- Function logic remains unchanged below this point ---
-    # --- The new 'gaddag_root_node' parameter is NOT used yet ---
+    # --- ADDED: Intermediate Python objects for anchor ---
+    cdef object anchor_r_obj, anchor_c_obj
 
     if depth > 20: return
     if not current_word_tiles: return
@@ -80,8 +79,9 @@ def _gaddag_traverse(
     last_elem = current_word_tiles[-1]
     if isinstance(last_elem, (list, tuple)) and len(last_elem) == 5:
         r_last_py, c_last_py, _ign1, _ign2, _ign3 = last_elem
-        r_last = r_last_py
-        c_last = c_last_py
+        # --- Assign to C integers ---
+        r_last = <int>r_last_py # Cast Python object to C int
+        c_last = <int>c_last_py # Cast Python object to C int
     else:
         raise TypeError(f"Expected 5-tuple at end of current_word_tiles, got {type(last_elem)}: {last_elem}")
     # --- End Explicit Check ---
@@ -175,7 +175,7 @@ def _gaddag_traverse(
                 _gaddag_traverse(
                     anchor_pos, current_rack_counts_c, tiles, board, blanks, cross_check_sets,
                     next_node,
-                    gaddag_root_node, # <<< Pass the root node through
+                    gaddag_root_node, # Pass the root node through
                     current_word_tiles, False, current_axis,
                     all_found_moves, unique_move_signatures, original_tiles_state,
                     is_first_play, full_rack_size, max_len, depth + 1
@@ -183,27 +183,40 @@ def _gaddag_traverse(
             continue
 
         next_r, next_c = -1, -1
-        # ... (next coordinate calculation - unchanged) ...
+        # --- MODIFICATION START: Use C integers for coordinate calculation ---
         if is_reversed:
+            # Use C integers r_last, c_last directly
             if current_axis == 'H': next_r, next_c = r_last, c_last - 1
             else:                   next_r, next_c = r_last - 1, c_last
         else:
+            # Unpack anchor_pos tuple into Python objects first
             anchor_r_obj, anchor_c_obj = anchor_pos
-            anchor_r = anchor_r_obj
-            anchor_c = anchor_c_obj
+            # Cast Python objects to C integers
+            anchor_r = <int>anchor_r_obj
+            anchor_c = <int>anchor_c_obj
+
+            # Check for tile on anchor (still uses Python objects for iteration)
             tile_on_anchor = None
             for t_r, t_c, t_l, t_b, t_n in current_word_tiles:
                  if t_r == anchor_r and t_c == anchor_c:
                       tile_on_anchor = (t_r, t_c); break
+
+            # Determine if separator was just crossed using C integers
             just_crossed_separator = False
             if len(current_word_tiles) > 0:
                 if current_axis == 'H':
                     if c_last <= anchor_c: just_crossed_separator = True
                 else:
                     if r_last <= anchor_r: just_crossed_separator = True
-            ref_r, ref_c = (anchor_r, anchor_c) if just_crossed_separator else (r_last, c_last)
+
+            # Determine reference point using C integers
+            ref_r = anchor_r if just_crossed_separator else r_last
+            ref_c = anchor_c if just_crossed_separator else c_last
+
+            # Calculate next position using C integers
             if current_axis == 'H': next_r, next_c = ref_r, ref_c + 1
             else:                   next_r, next_c = ref_r + 1, ref_c
+        # --- MODIFICATION END ---
 
 
         if not (0 <= next_r < GRID_SIZE and 0 <= next_c < GRID_SIZE): continue
@@ -228,7 +241,7 @@ def _gaddag_traverse(
                 _gaddag_traverse(
                     anchor_pos, next_rack_np_arr, tiles, board, blanks, cross_check_sets,
                     next_node,
-                    gaddag_root_node, # <<< Pass the root node through
+                    gaddag_root_node, # Pass the root node through
                     current_word_tiles + [(next_r, next_c, letter, False, True)],
                     is_reversed, current_axis, all_found_moves, unique_move_signatures,
                     original_tiles_state, is_first_play, full_rack_size, max_len, depth + 1
@@ -244,7 +257,7 @@ def _gaddag_traverse(
                 _gaddag_traverse(
                     anchor_pos, next_rack_np_arr, tiles, board, blanks, cross_check_sets,
                     next_node,
-                    gaddag_root_node, # <<< Pass the root node through
+                    gaddag_root_node, # Pass the root node through
                     current_word_tiles + [(next_r, next_c, letter, True, True)],
                     is_reversed, current_axis, all_found_moves, unique_move_signatures,
                     original_tiles_state, is_first_play, full_rack_size, max_len, depth + 1
@@ -255,7 +268,7 @@ def _gaddag_traverse(
             _gaddag_traverse(
                 anchor_pos, current_rack_counts_c, tiles, board, blanks, cross_check_sets,
                 next_node,
-                gaddag_root_node, # <<< Pass the root node through
+                gaddag_root_node, # Pass the root node through
                 current_word_tiles + [(next_r, next_c, letter, False, False)],
                 is_reversed, current_axis, all_found_moves, unique_move_signatures,
                 original_tiles_state, is_first_play, full_rack_size, max_len, depth + 1
