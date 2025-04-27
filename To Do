@@ -20,6 +20,8 @@ To-Do List
 
 -- In batch game text file, break bingos played down into quartiles.
 
+-- Fix or replace the Mode Selection screen background pic. It's good but doesn't fit well in the frame.
+
 -- Figure out how leave evaluation is done. Should we multiply the static value of a letter with it's probability of being drawn? And what about incorporating 2-leave synergies, with their corresponding probability of being drawn?
 
 
