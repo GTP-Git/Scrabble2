@@ -173,6 +173,9 @@ button_font = pygame.font.SysFont("Arial", 16)
 tile_count_font = pygame.font.SysFont("Arial", 14)
 dialog_font = pygame.font.SysFont("Arial", 24)
 
+
+
+
 TILE_LETTER_CACHE = {
     'regular': {}, # For standard tiles (black text)
     'blank': {}    # For blank tiles (white text)
@@ -190,7 +193,14 @@ for i in range(26):
 blank_surf = font.render('?', True, WHITE)
 TILE_LETTER_CACHE['blank']['?'] = blank_surf
 print("Tile letter pre-rendering complete.")
-# --- END NEW ---
+
+
+
+SCORE_CACHE = {
+    0: {'score': None, 'surface': None},
+    1: {'score': None, 'surface': None}
+}
+
 
 
 # Global bag - initialized properly in main() or practice setup
@@ -713,16 +723,19 @@ def create_board():
 
     return board, labels, tiles
 
+
+
+
+
 # --- Drawing Functions ---
 
 
 # Function to Replace: draw_rack
-# REASON: Remove incorrect attempt to draw the dragged tile within this function.
-#         Drawing the dragged tile is handled in draw_game_screen.
+# REASON: Add caching for player score text surfaces.
 
 def draw_rack(player, rack, scores, turn, player_names, dragged_tile=None, drag_pos=None, display_scores=None):
-    """Draw a player's rack with tiles, scores, and buttons. Uses cached surfaces."""
-    global practice_mode, TILE_LETTER_CACHE # Access global practice_mode and cache
+    """Draw a player's rack with tiles, scores, and buttons. Uses cached surfaces for letters and scores."""
+    global practice_mode, TILE_LETTER_CACHE, SCORE_CACHE # Add SCORE_CACHE global
     if not rack: return None, None
     if display_scores is None: display_scores = scores
     if practice_mode == "eight_letter" and player == 2: return None, None # Don't draw P2 rack
@@ -738,46 +751,27 @@ def draw_rack(player, rack, scores, turn, player_names, dragged_tile=None, drag_
         for i in range(10): angle = i * math.pi / 5; r = radius if i % 2 == 0 else radius / 2; x = center_x + r * math.cos(angle); y = center_y + r * math.sin(angle); points.append((x, y))
         pygame.draw.polygon(screen, TURN_INDICATOR_COLOR, points)
 
-    for i, tile in enumerate(rack): # Draw tiles
+    for i, tile in enumerate(rack): # Draw tiles (using letter cache)
         tile_x = start_x + i * (TILE_WIDTH + TILE_GAP)
-        tile_rect = pygame.Rect(tile_x, rack_y, TILE_WIDTH, TILE_HEIGHT) # Define rect for centering
-
-        # --- MODIFICATION: Check if this tile is the one being dragged ---
-        # Check if a tile is being dragged, if it belongs to this player,
-        # and if its index matches the current loop index 'i'.
+        tile_rect = pygame.Rect(tile_x, rack_y, TILE_WIDTH, TILE_HEIGHT)
         is_this_tile_dragged = (dragged_tile is not None and
                                 dragged_tile[0] == player and
                                 dragged_tile[1] == i)
-
-        # Skip drawing the tile placeholder if it's the one being dragged
         if is_this_tile_dragged:
              continue
-        # --- END MODIFICATION ---
-
-        # Draw the tile if it's not being dragged
         if tile == ' ':
             center = tile_rect.center; radius = TILE_WIDTH // 2 - 2
             pygame.draw.circle(screen, BLACK, center, radius)
-            # --- Use Cache ---
             text_surf = TILE_LETTER_CACHE['blank'].get('?')
             if text_surf:
                 text_rect = text_surf.get_rect(center=center)
                 screen.blit(text_surf, text_rect)
-            # --- End Use Cache ---
         else:
             pygame.draw.rect(screen, GREEN, tile_rect)
-            # --- Use Cache ---
             text_surf = TILE_LETTER_CACHE['regular'].get(tile)
             if text_surf:
-                # Center the cached surface within the tile rect
                 text_rect = text_surf.get_rect(center=tile_rect.center)
                 screen.blit(text_surf, text_rect)
-            # --- End Use Cache ---
-
-    # --- REMOVED the block that tried to draw the dragged tile here ---
-    # if dragged_tile and dragged_tile[0] == player and drag_pos: # Draw dragged tile
-    #    ... (removed code that caused NameError) ...
-    # --- END REMOVED ---
 
     # Draw buttons (unchanged)
     button_x = start_x + rack_width + BUTTON_GAP
@@ -786,13 +780,35 @@ def draw_rack(player, rack, scores, turn, player_names, dragged_tile=None, drag_
     alpha_text = button_font.render("Alphabetize", True, BLACK); alpha_rect = alpha_text.get_rect(center=alpha_button_rect.center); screen.blit(alpha_text, alpha_rect)
     rand_text = button_font.render("Randomize", True, BLACK); rand_rect = rand_text.get_rect(center=rand_button_rect.center); screen.blit(rand_text, rand_rect)
 
-    # Draw score (unchanged)
+    # --- Draw score (with caching) ---
     player_idx = player - 1
+    score_surface_to_blit = None # Initialize
     if 0 <= player_idx < len(player_names) and 0 <= player_idx < len(display_scores):
         player_name_display = player_names[player_idx] if player_names[player_idx] else f"Player {player}"
-        score_text = ui_font.render(f"{player_name_display} Score: {display_scores[player_idx]}", True, BLACK)
-        screen.blit(score_text, (start_x, rack_y - 20))
+        current_score = display_scores[player_idx]
+
+        # Check cache
+        cached_data = SCORE_CACHE.get(player_idx)
+        if cached_data and cached_data['score'] == current_score and cached_data['surface'] is not None:
+            # Cache hit! Use the cached surface
+            score_surface_to_blit = cached_data['surface']
+            # print(f"DEBUG: Cache HIT for Player {player} score {current_score}") # Optional debug
+        else:
+            # Cache miss or score changed: Render new surface and update cache
+            # print(f"DEBUG: Cache MISS for Player {player} score {current_score}") # Optional debug
+            score_text_str = f"{player_name_display} Score: {current_score}"
+            score_surface_to_blit = ui_font.render(score_text_str, True, BLACK)
+            SCORE_CACHE[player_idx] = {'score': current_score, 'surface': score_surface_to_blit}
+
+        # Blit the determined surface
+        if score_surface_to_blit:
+            screen.blit(score_surface_to_blit, (start_x, rack_y - 20))
+        else:
+             print(f"Warning: Could not get/render score surface for player {player}")
+
     else: print(f"Warning: Invalid player index {player} for score display.")
+    # --- End score drawing ---
+
     return alpha_button_rect, rand_button_rect
 
 
@@ -2632,14 +2648,14 @@ _gaddag_traverse_cython(
 
 
 # Function to Replace: generate_all_moves_gaddag
-# REASON: Revert the addition of the dawg_root_node argument to _gaddag_traverse_cython
-#         to fix the TypeError caused by mismatch with the current Cython signature.
+# REASON: Pass the gaddag_root_node argument to _gaddag_traverse_cython
+#         to match the updated Cython signature.
 
 def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
     """
     Generates ALL valid Scrabble moves using GADDAG traversal.
     Converts rack Counter to C array (using numpy.array with dtype=np.intc)
-    before calling Cython.
+    before calling Cython. Passes the GADDAG root node to Cython.
     """
     # Removed global DAWG access - assume DAWG is accessible if needed by cross_check
     global gaddag_loading_status
@@ -2716,7 +2732,7 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
     # --- Initiate Traversal using numpy array ---
     processed_adjacent_starts = set()
     initial_rack_counts_c_copy = rack_counts_c_arr.copy() # numpy copy
-    # --- Removed dawg_root_node variable ---
+    # --- gaddag_root is already passed as argument to this function ---
 
     for r_anchor, c_anchor in anchors:
         anchor_pos = (r_anchor, c_anchor)
@@ -2734,14 +2750,14 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
                     initial_tiles = [(r_anchor, c_anchor, tile_letter, False, True)]
 
                     if tile_letter in allowed_v:
-                         # --- REVERTED CALL: Removed dawg_root_node ---
-                         _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_s1, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles), True, 'H', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
-                         # --- END REVERT ---
+                         # --- MODIFIED CALL: Added gaddag_root ---
+                         _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_s1, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'H', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                         # --- END MODIFICATION ---
 
                     if tile_letter in allowed_h:
-                         # --- REVERTED CALL: Removed dawg_root_node ---
-                         _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_s1, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles), True, 'V', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
-                         # --- END REVERT ---
+                         # --- MODIFIED CALL: Added gaddag_root ---
+                         _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_s1, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'V', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                         # --- END MODIFICATION ---
 
         # Handle blank for Strategy 1
         if rack_counts_py[' '] > 0:
@@ -2753,13 +2769,13 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
                         next_node = gaddag_root.children[assigned_letter]
                         initial_tiles = [(r_anchor, c_anchor, assigned_letter, True, True)]
                         if ' ' in allowed_v:
-                            # --- REVERTED CALL: Removed dawg_root_node ---
-                            _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_blank, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles), True, 'H', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
-                            # --- END REVERT ---
+                            # --- MODIFIED CALL: Added gaddag_root ---
+                            _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_blank, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'H', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                            # --- END MODIFICATION ---
                         if ' ' in allowed_h:
-                            # --- REVERTED CALL: Removed dawg_root_node ---
-                            _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_blank, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles), True, 'V', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
-                            # --- END REVERT ---
+                            # --- MODIFIED CALL: Added gaddag_root ---
+                            _gaddag_traverse_cython(anchor_pos, next_rack_counts_c_arr_blank, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'V', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                            # --- END MODIFICATION ---
 
         # --- Strategy 2 ---
         if not is_first_play:
@@ -2774,10 +2790,10 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
                             next_node = gaddag_root.children[existing_tile_letter]
                             initial_tiles = [(nr, nc, existing_tile_letter, False, False)]
                             start_axis = 'V' if dr != 0 else 'H'
-                            # --- REVERTED CALL: Removed dawg_root_node ---
-                            _gaddag_traverse_cython(anchor_pos, initial_rack_counts_c_copy, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles[:]), False, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
-                            _gaddag_traverse_cython(anchor_pos, initial_rack_counts_c_copy, tiles, board, blanks, cross_check_sets, next_node, list(initial_tiles[:]), True, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
-                            # --- END REVERT ---
+                            # --- MODIFIED CALL: Added gaddag_root ---
+                            _gaddag_traverse_cython(anchor_pos, initial_rack_counts_c_copy, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles[:]), False, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                            _gaddag_traverse_cython(anchor_pos, initial_rack_counts_c_copy, tiles, board, blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles[:]), True, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size)
+                            # --- END MODIFICATION ---
 
     # Post-processing (unchanged)
     all_found_moves.sort(key=lambda m: m['score'], reverse=True)
@@ -4570,7 +4586,8 @@ def run_ai_simulation(ai_rack, opponent_rack_len, tiles, blanks, board, bag, gad
 
 
 # Function to Replace: handle_mouse_down_event (Complete)
-# REASON: Correct indentation error in final state packing block.
+# REASON: Correct Suggest button logic AGAIN for 8-Letter Bingo mode to use
+#         pre-calculated practice_target_moves instead of regenerating.
 
 def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects parameter
         """
@@ -4587,7 +4604,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
         Reads global gaddag_loading_status directly for AI actions.
         Passes board_tile_counts to play_hint_move and run_ai_simulation.
         Calls find_best_exchange_option after simulation for human hints.
-        Removes automatic move regeneration after Specify Racks confirmation.
+        Corrects Suggest logic AGAIN for 8-Letter Bingo mode.
         """
         # --- Access global directly for GADDAG status check ---
         global gaddag_loading_status, GADDAG_STRUCTURE # Need GADDAG_STRUCTURE too
@@ -4603,6 +4620,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
         restart_practice_mode = state['restart_practice_mode'] # Unpack flag
         stats_total_content_height = state.get('stats_total_content_height', 0) # Use .get() for safety
         board_tile_counts = state['board_tile_counts'] # Unpack the counter
+        practice_target_moves = state['practice_target_moves'] # <<< Unpack practice_target_moves
         # --- Initialize local cursor variables from state ---
         current_r = state.get('current_r')
         current_c = state.get('current_c')
@@ -4663,6 +4681,9 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
         updated_state = {}
         running_inner = True; return_to_mode_selection = False; batch_stop_requested = False; human_played = False
         x, y = event.pos
+        # --- Initialize variables for hint dialog ---
+        # best_exchange_for_hint = None # Already unpacked
+        # best_exchange_score_for_hint = -float('inf') # Already unpacked
 
         # --- Practice End Dialog Handling ---
         if showing_practice_end_dialog:
@@ -4671,9 +4692,9 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                      restart_practice_mode = True
                      showing_practice_end_dialog = False
                  elif practice_main_menu_rect and practice_main_menu_rect.collidepoint(x,y):
-                     running_inner = False; return_to_mode_selection = True;
+                     running_inner = False; return_to_mode_selection = True; # batch_stop_requested = True # Let main handle this
                  elif practice_quit_rect and practice_quit_rect.collidepoint(x,y):
-                     running_inner = False;
+                     running_inner = False; # batch_stop_requested = True # Let main handle this
              updated_state.update({'running_inner': running_inner, 'return_to_mode_selection': return_to_mode_selection, 'restart_practice_mode': restart_practice_mode, 'showing_practice_end_dialog': showing_practice_end_dialog})
              return updated_state
         # Simulation Config Dialog Handling ---
@@ -4690,39 +4711,51 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                         if num_ai_cand <= 0 or num_opp_sim <= 0 or num_post_sim <= 0: raise ValueError("Values must be positive.")
                         print(f"--- Running Human Turn Simulation with Params: AI Cands={num_ai_cand}, Opp Sims={num_opp_sim}, Post Sims={num_post_sim} ---")
                         showing_simulation_config = False; simulation_config_active_input = None
+                        # *** Check GLOBAL status AND GADDAG_STRUCTURE directly ***
                         if gaddag_loading_status != 'loaded' or GADDAG_STRUCTURE is None:
                             show_message_dialog("Cannot simulate: AI data (GADDAG) is not loaded or available.", "Error")
                         else:
                             player_idx = turn - 1; opponent_idx = 1 - player_idx; opponent_rack_len = len(racks[opponent_idx]) if opponent_idx < len(racks) else 7
+                            # --- ADD DEBUG PRINT ---
                             print("  DEBUG: About to call run_ai_simulation...")
+                            # --- MODIFICATION: Pass board_tile_counts ---
                             simulation_results = run_ai_simulation(racks[player_idx], opponent_rack_len, tiles, blanks, board, bag, GADDAG_STRUCTURE.root, first_play, board_tile_counts, num_ai_candidates=num_ai_cand, num_opponent_sims=num_opp_sim, num_post_sim_candidates=num_post_sim)
-                            print("  DEBUG: run_ai_simulation finished.")
+                            # --- END MODIFICATION ---
+                            print("  DEBUG: run_ai_simulation finished.") # DEBUG
                             if simulation_results: top_sim_move = simulation_results[0]['move']; top_sim_score = simulation_results[0]['final_score']; print(f"  Simulate Button Top Sim Result: Play '{top_sim_move.get('word','N/A')}' (Sim Score: {top_sim_score:.1f})")
                             else: print("  Simulate Button: No valid simulation results found.")
-                            hint_moves = simulation_results
+                            hint_moves = simulation_results # Store simulation results
 
-                            print(f"  DEBUG: *** BEFORE Exchange Check. bag_count = {bag_count} ***")
-                            if bag_count >= 1:
-                                print("  DEBUG: Evaluating exchange option for hint dialog...")
+                            # --- ADDED: Evaluate exchange option ---
+                            # --- ADD DEBUG ---
+                            print(f"  DEBUG: *** BEFORE Exchange Check. bag_count = {bag_count} ***") # NEW DEBUG
+                            if bag_count >= 1: # Only evaluate if exchange is possible
+                                print("  DEBUG: Evaluating exchange option for hint dialog...") # DEBUG 1
                                 current_player_rack = racks[player_idx]
+                                # Need remaining tiles dict based on current state
                                 remaining_dict_for_exchange = get_remaining_tiles(current_player_rack, board_tile_counts)
                                 best_exchange_for_hint, best_exchange_score_for_hint = find_best_exchange_option(current_player_rack, remaining_dict_for_exchange, bag_count)
+                                # --- DEBUG 2: Print result always ---
                                 if best_exchange_for_hint:
                                     print(f"  DEBUG: Best Exchange Option Found: {''.join(sorted(best_exchange_for_hint))} (Eval: {best_exchange_score_for_hint:.1f})")
                                 else:
-                                    print(f"  DEBUG: No beneficial exchange option found (Result: {best_exchange_score_for_hint}).")
+                                    print(f"  DEBUG: No beneficial exchange option found (Result: {best_exchange_score_for_hint}).") # Modified print
+                                # --- END DEBUG 2 ---
                             else:
-                                print("  DEBUG: Skipping exchange evaluation (bag empty or < 1 tile).")
+                                print("  DEBUG: Skipping exchange evaluation (bag empty or < 1 tile).") # DEBUG 3
                                 best_exchange_for_hint = None
                                 best_exchange_score_for_hint = -float('inf')
-                            print("  DEBUG: *** AFTER Exchange Check. ***")
+                            print("  DEBUG: *** AFTER Exchange Check. ***") # NEW DEBUG
+                            # --- END ADDED ---
 
                             hinting = True; selected_hint_index = 0 if hint_moves else None
-                            print(f"  DEBUG: Setting hinting = {hinting}")
+                            print(f"  DEBUG: Setting hinting = {hinting}") # NEW DEBUG
                     except ValueError as e: show_message_dialog(f"Invalid input: {e}\nPlease enter positive numbers.", "Input Error")
-            # Update state and return (no change needed here, handled later)
+            # --- MODIFICATION: Remove premature return ---
+            # updated_state.update({...}) # Update happens later now
+            # return updated_state # REMOVED
         # --- Specify Rack Dialog Handling ---
-        elif specifying_rack: # Use elif to ensure exclusivity
+        if specifying_rack:
             if confirming_override:
                 if event.button == 1:
                     if go_back_rect_ov and go_back_rect_ov.collidepoint(x, y): confirming_override = False; specify_rack_proposed_racks = [[], []]
@@ -4730,6 +4763,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                         print("Overriding bag constraints and setting racks."); racks[0] = specify_rack_proposed_racks[0][:]; racks[1] = specify_rack_proposed_racks[1][:]
                         if not is_ai[0]: racks[0].sort()
                         if not is_ai[1]: racks[1].sort()
+                        # --- REMOVED automatic move regeneration ---
                         all_moves = [] # Explicitly clear moves after setting rack
                         specifying_rack = False; confirming_override = False; specify_rack_inputs = ["", ""]; specify_rack_active_input = None; specify_rack_original_racks = [[], []]; specify_rack_proposed_racks = [[], []]; dropdown_open = False
                 updated_state.update({'racks': racks, 'all_moves': all_moves, 'specifying_rack': specifying_rack, 'confirming_override': confirming_override, 'specify_rack_inputs': specify_rack_inputs, 'specify_rack_active_input': specify_rack_active_input, 'specify_rack_original_racks': specify_rack_original_racks, 'specify_rack_proposed_racks': specify_rack_proposed_racks, 'dropdown_open': dropdown_open})
@@ -4744,7 +4778,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                     valid_input = True; proposed_racks_temp = [[], []]; error_message = None
                     for i in range(2):
                         input_str = specify_rack_inputs[i].upper()
-                        if not (0 <= len(input_str) <= 7): error_message = f"Player {i+1} rack must have 0 to 7 tiles."; valid_input = False; break
+                        if not (0 <= len(input_str) <= 7): error_message = f"Player {i+1} rack must have 0 to 7 tiles."; valid_input = False; break # Allow 0 tiles
                         current_proposed_rack = []
                         for char in input_str:
                             if 'A' <= char <= 'Z': current_proposed_rack.append(char)
@@ -4762,17 +4796,18 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                             print("Specified racks are valid or don't require bag tiles. Setting racks."); racks[0] = proposed_racks_temp[0][:]; racks[1] = proposed_racks_temp[1][:]
                             if not is_ai[0]: racks[0].sort()
                             if not is_ai[1]: racks[1].sort()
+                            # --- REMOVED automatic move regeneration ---
                             all_moves = [] # Explicitly clear moves after setting rack
                             specifying_rack = False; specify_rack_inputs = ["", ""]; specify_rack_active_input = None; specify_rack_original_racks = [[], []]; dropdown_open = False
                 else: specify_rack_active_input = None
             updated_state.update({'racks': racks, 'all_moves': all_moves, 'specifying_rack': specifying_rack, 'confirming_override': confirming_override, 'specify_rack_inputs': specify_rack_inputs, 'specify_rack_active_input': specify_rack_active_input, 'specify_rack_original_racks': specify_rack_original_racks, 'specify_rack_proposed_racks': specify_rack_proposed_racks, 'dropdown_open': dropdown_open})
             return updated_state
         # --- Options Menu Click ---
-        elif options_rect_base and options_rect_base.collidepoint(x, y): # Use elif
+        if options_rect_base and options_rect_base.collidepoint(x, y):
             dropdown_open = not dropdown_open; updated_state['dropdown_open'] = dropdown_open; return updated_state
         # --- Dropdown Item Click ---
-        elif dropdown_open: # Use elif
-            clicked_dropdown_item = False;
+        elif dropdown_open:
+            clicked_dropdown_item = False; # ... (determine current_options_list) ...
             if is_batch_running: current_options_list = ["Stop Batch", "Quit"]
             elif replay_mode or game_over_state: current_options_list = ["Main", "Quit"]
             elif practice_mode == "eight_letter": current_options_list = ["Give Up", "Main", "Quit"]
@@ -4782,16 +4817,17 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                 if rect and rect.collidepoint(x, y):
                     if i < len(drawn_options):
                         selected_option = drawn_options[i]; clicked_dropdown_item = True; dropdown_open = False
-                        if selected_option == "Stop Batch": print("--- Batch Run Aborted by User ---"); running_inner = False; return_to_mode_selection = True
+                        # ... (handle selected_option actions as before) ...
+                        if selected_option == "Stop Batch": print("--- Batch Run Aborted by User ---"); running_inner = False; return_to_mode_selection = True # Set flags
                         elif selected_option == "Pass": move_rack = racks[turn-1][:]; consecutive_zero_point_turns += 1; pass_count += 1; exchange_count = 0; print(f"Player {turn} passed"); human_played = True; paused_for_power_tile = False; paused_for_bingo_practice = False; move_history.append({'player': turn, 'move_type': 'pass', 'rack': move_rack, 'score': 0, 'word': '', 'coord': '', 'blanks': set(), 'positions': [], 'drawn': [], 'is_bingo': False, 'word_with_blanks': '', 'turn_duration': 0.0, 'pool_quality_before_draw': current_turn_pool_quality_score, 'luck_factor': 0.0}); current_replay_turn = len(move_history); turn = 3 - turn; last_played_highlight_coords = set()
                         elif selected_option == "Exchange":
-                            if bag_count >= 7: exchanging = True; selected_tiles.clear()
+                            if bag_count >= 7: exchanging = True; selected_tiles.clear() # Use bag_count variable
                             else: show_message_dialog("Cannot exchange, less than 7 tiles in bag.", "Exchange Error")
                         elif selected_option == "Specify Rack":
                             is_human_turn = not is_ai[turn-1]; allowed_mode = game_mode in [MODE_HVH, MODE_HVA]
                             if is_human_turn and allowed_mode:
                                 print("Specify Rack selected."); specifying_rack = True; specify_rack_original_racks = [racks[0][:], racks[1][:]]; specify_rack_inputs[0] = "".join(['?' if t == ' ' else t for t in racks[0]]); specify_rack_inputs[1] = "".join(['?' if t == ' ' else t for t in racks[1]]); specify_rack_active_input = None; confirming_override = False
-                                typing = False; word_positions = []; selected_square = None; current_r = None; current_c = None
+                                typing = False; word_positions = []; selected_square = None; current_r = None; current_c = None # Reset cursor state
                                 if original_tiles and original_rack:
                                     for r_wp, c_wp, _ in word_positions: tiles[r_wp][c_wp] = original_tiles[r_wp][c_wp]
                                     racks[turn-1] = original_rack[:];
@@ -4801,21 +4837,22 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                         elif selected_option == "Give Up":
                             if practice_mode == "eight_letter":
                                 practice_end_message = f"Best: {practice_best_move['word_with_blanks']} ({practice_best_move['score']} pts)" if practice_best_move else "No best move found."; practice_solved = True; showing_practice_end_dialog = True
-                        elif selected_option == "Main": running_inner = False; return_to_mode_selection = True
+                        elif selected_option == "Main": running_inner = False; return_to_mode_selection = True # Set flags
                         elif selected_option == "Quit":
-                            if confirm_quit(): running_inner = False; return_to_mode_selection = False
+                            if confirm_quit(): running_inner = False; return_to_mode_selection = False # Set flags
                         break
             if clicked_dropdown_item:
-                 updated_state.update({'running_inner': running_inner, 'return_to_mode_selection': return_to_mode_selection, 'dropdown_open': dropdown_open, 'exchanging': exchanging, 'selected_tiles': selected_tiles, 'specifying_rack': specifying_rack, 'specify_rack_original_racks': specify_rack_original_racks, 'specify_rack_inputs': specify_rack_inputs, 'specify_rack_active_input': specify_rack_active_input, 'confirming_override': confirming_override, 'typing': typing, 'word_positions': word_positions, 'selected_square': selected_square, 'original_tiles': original_tiles, 'original_rack': original_rack, 'blanks': blanks, 'practice_end_message': practice_end_message, 'practice_solved': practice_solved, 'showing_practice_end_dialog': showing_practice_end_dialog, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'human_played': human_played, 'paused_for_power_tile': paused_for_power_tile, 'paused_for_bingo_practice': paused_for_bingo_practice, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'turn': turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'current_r': current_r, 'current_c': current_c})
+                 updated_state.update({'running_inner': running_inner, 'return_to_mode_selection': return_to_mode_selection, 'dropdown_open': dropdown_open, 'exchanging': exchanging, 'selected_tiles': selected_tiles, 'specifying_rack': specifying_rack, 'specify_rack_original_racks': specify_rack_original_racks, 'specify_rack_inputs': specify_rack_inputs, 'specify_rack_active_input': specify_rack_active_input, 'confirming_override': confirming_override, 'typing': typing, 'word_positions': word_positions, 'selected_square': selected_square, 'original_tiles': original_tiles, 'original_rack': original_rack, 'blanks': blanks, 'practice_end_message': practice_end_message, 'practice_solved': practice_solved, 'showing_practice_end_dialog': showing_practice_end_dialog, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'human_played': human_played, 'paused_for_power_tile': paused_for_power_tile, 'paused_for_bingo_practice': paused_for_bingo_practice, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'turn': turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'current_r': current_r, 'current_c': current_c}) # Pack cursor state
                  return updated_state
             else: dropdown_open = False; updated_state['dropdown_open'] = dropdown_open
 
         # --- Process other MOUSEBUTTONDOWN only if NOT in batch mode ---
-        elif not is_batch_running: # Use elif
+        if not is_batch_running:
             current_time = pygame.time.get_ticks()
             if event.button == 1: # Left Click
                 # --- Game Over Event Handling ---
                 if game_over_state:
+                    # ... (game over button handling - unchanged, uses rects from drawn_rects) ...
                     if save_rect and save_rect.collidepoint(x, y):
                         if final_scores and player_names and move_history and initial_racks:
                             gcg_content = save_game_to_gcg(player_names, move_history, initial_racks, final_scores); now = datetime.datetime.now(); date_str = now.strftime("%d%b%y").upper(); time_str = now.strftime("%H%M"); seq_num = 1; max_existing_num = 0
@@ -4832,11 +4869,11 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                 with open(save_filename, "w") as f: f.write(gcg_content); print(f"Game saved to {save_filename}"); show_message_dialog(f"Game saved to:\n{save_filename}", "Game Saved")
                             except IOError as e: print(f"Error saving game to {save_filename}: {e}"); show_message_dialog(f"Error saving game: {e}", "Save Error")
                         else: print("Error: Missing data required for saving."); show_message_dialog("Could not save game: Missing data.", "Save Error")
-                    elif quit_rect and quit_rect.collidepoint(x, y): running_inner = False; return_to_mode_selection = False
+                    elif quit_rect and quit_rect.collidepoint(x, y): running_inner = False; return_to_mode_selection = False # Set flags
                     elif replay_rect and replay_rect.collidepoint(x, y):
                         if move_history: print("Entering Replay Mode..."); replay_mode = True; current_replay_turn = 0; game_over_state = False; showing_stats = False; last_played_highlight_coords = set()
                         else: print("Cannot enter replay: No move history found.")
-                    elif play_again_rect and play_again_rect.collidepoint(x, y): running_inner = False; return_to_mode_selection = True
+                    elif play_again_rect and play_again_rect.collidepoint(x, y): running_inner = False; return_to_mode_selection = True # Set flags
                     elif stats_rect and stats_rect.collidepoint(x, y): showing_stats = True; stats_dialog_x = (WINDOW_WIDTH - 480) // 2; stats_dialog_y = (WINDOW_HEIGHT - 600) // 2; stats_scroll_offset = 0; stats_dialog_dragging = False
                     elif showing_stats and stats_ok_button_rect and stats_ok_button_rect.collidepoint(x, y): showing_stats = False
                     elif showing_stats:
@@ -4849,7 +4886,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                     return updated_state
 
                 # --- Active Game / Replay Event Handling ---
-                elif not specifying_rack and not showing_simulation_config: # Use elif
+                if not specifying_rack and not showing_simulation_config:
                     if replay_mode: # Replay buttons
                         if replay_start_rect.collidepoint(x, y): current_replay_turn = 0; last_played_highlight_coords = set()
                         elif replay_prev_rect.collidepoint(x, y) and current_replay_turn > 0: current_replay_turn -= 1; last_played_highlight_coords = set()
@@ -4859,39 +4896,53 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                         is_human_turn_or_paused_practice = not is_ai[turn-1] or paused_for_power_tile or paused_for_bingo_practice
                         # --- Suggest Button Click ---
                         if suggest_rect_base and suggest_rect_base.collidepoint(x, y) and is_human_turn_or_paused_practice:
-                            if gaddag_loading_status != 'loaded' or GADDAG_STRUCTURE is None:
-                                show_message_dialog("Cannot suggest moves: AI data is not loaded or available.", "Loading")
-                            else:
-                                moves_to_hint = []; current_player_rack = racks[turn-1]
-                                print(f"DEBUG: Suggest clicked. Regenerating moves for Player {turn}, Rack: {''.join(sorted(current_player_rack))}")
-                                tiles_copy = [row[:] for row in tiles]; blanks_copy = blanks.copy(); board_copy = board
-                                all_moves_generated_for_hint = generate_all_moves_gaddag(current_player_rack, tiles_copy, board_copy, blanks_copy, GADDAG_STRUCTURE.root)
-                                if all_moves_generated_for_hint is None: all_moves_generated_for_hint = []; print("DEBUG: generate_all_moves_gaddag returned None for Suggest.")
-                                else: print(f"DEBUG: generate_all_moves_gaddag returned {len(all_moves_generated_for_hint)} moves for Suggest.")
+                            # --- MODIFICATION START: Correct 8-Letter Logic ---
+                            if practice_mode == "eight_letter":
+                                print(f"DEBUG: Suggest clicked (8-Letter). Using practice_target_moves (length: {len(practice_target_moves)}).")
+                                moves_to_hint = practice_target_moves if practice_target_moves else []
+                                all_moves = practice_target_moves # Ensure all_moves state is also correct
+                            # --- END MODIFICATION ---
+                            else: # Standard game or other practice modes
+                                # *** Check GLOBAL status AND GADDAG_STRUCTURE directly ***
+                                if gaddag_loading_status != 'loaded' or GADDAG_STRUCTURE is None:
+                                    show_message_dialog("Cannot suggest moves: AI data is not loaded or available.", "Loading")
+                                    moves_to_hint = [] # Ensure it's empty if GADDAG not ready
+                                    all_moves = []
+                                else:
+                                    current_player_rack = racks[turn-1]
+                                    print(f"DEBUG: Suggest clicked (Standard/Other Practice). Regenerating moves for Player {turn}, Rack: {''.join(sorted(current_player_rack))}")
+                                    tiles_copy = [row[:] for row in tiles]; blanks_copy = blanks.copy(); board_copy = board
+                                    # *** Generate into temporary variable ***
+                                    all_moves_generated_for_hint = generate_all_moves_gaddag(current_player_rack, tiles_copy, board_copy, blanks_copy, GADDAG_STRUCTURE.root)
+                                    if all_moves_generated_for_hint is None: all_moves_generated_for_hint = []; print("DEBUG: generate_all_moves_gaddag returned None for Suggest.")
+                                    else: print(f"DEBUG: generate_all_moves_gaddag returned {len(all_moves_generated_for_hint)} moves for Suggest.")
 
-                                if practice_mode == "eight_letter": moves_to_hint = practice_target_moves if practice_target_moves else []
-                                elif practice_mode == "power_tiles" and paused_for_power_tile and current_power_tile: power_moves_hint = [m for m in all_moves_generated_for_hint if any(letter == current_power_tile for _, _, letter in m.get('newly_placed',[])) and is_word_length_allowed(len(m.get('word','')), number_checks)]; moves_to_hint = sorted(power_moves_hint, key=lambda m: m['score'], reverse=True)
-                                elif practice_mode == "bingo_bango_bongo" and paused_for_bingo_practice: bingo_moves_hint = [m for m in all_moves_generated_for_hint if m.get('is_bingo', False)]; moves_to_hint = sorted(bingo_moves_hint, key=lambda m: m['score'], reverse=True)
-                                else: moves_to_hint = all_moves_generated_for_hint
+                                    # Filter for other practice modes if needed
+                                    if practice_mode == "power_tiles" and paused_for_power_tile and current_power_tile: power_moves_hint = [m for m in all_moves_generated_for_hint if any(letter == current_power_tile for _, _, letter in m.get('newly_placed',[])) and is_word_length_allowed(len(m.get('word','')), number_checks)]; moves_to_hint = sorted(power_moves_hint, key=lambda m: m['score'], reverse=True)
+                                    elif practice_mode == "bingo_bango_bongo" and paused_for_bingo_practice: bingo_moves_hint = [m for m in all_moves_generated_for_hint if m.get('is_bingo', False)]; moves_to_hint = sorted(bingo_moves_hint, key=lambda m: m['score'], reverse=True)
+                                    else: moves_to_hint = all_moves_generated_for_hint # Use generated moves for standard game
+                                    # *** Store the generated moves back into the main state's all_moves ***
+                                    all_moves = all_moves_generated_for_hint # Update the state variable
 
-                                hint_moves = moves_to_hint[:5]; hinting = True; selected_hint_index = 0 if hint_moves else None
-                                all_moves = all_moves_generated_for_hint
-                                updated_state['all_moves'] = all_moves
+                            # --- Common logic for setting hint state ---
+                            hint_moves = moves_to_hint[:5]; hinting = True; selected_hint_index = 0 if hint_moves else None
+                            updated_state['all_moves'] = all_moves # Ensure it's packed
 
                         # --- Simulate Button Click ---
                         elif simulate_button_rect and simulate_button_rect.collidepoint(x, y) and is_human_turn_or_paused_practice:
+                            # *** Check GLOBAL status AND GADDAG_STRUCTURE directly ***
                             if gaddag_loading_status != 'loaded' or GADDAG_STRUCTURE is None:
                                 show_message_dialog("Cannot simulate: AI data is not loaded or available.", "Loading")
                             else:
                                 print("Simulate button clicked."); showing_simulation_config = True; simulation_config_inputs = [str(DEFAULT_AI_CANDIDATES), str(DEFAULT_OPPONENT_SIMULATIONS), str(DEFAULT_POST_SIM_CANDIDATES)]; simulation_config_active_input = None
-                                typing = False; word_positions = []; selected_square = None; current_r = None; current_c = None
+                                typing = False; word_positions = []; selected_square = None; current_r = None; current_c = None # Reset cursor
                                 if original_tiles and original_rack:
                                     for r_wp, c_wp, _ in word_positions: tiles[r_wp][c_wp] = original_tiles[r_wp][c_wp]
                                     racks[turn-1] = original_rack[:];
                                     if not is_ai[turn-1]: racks[turn-1].sort()
                                     blanks_to_remove = set((r_wp, c_wp) for r_wp, c_wp, _ in word_positions if (r_wp, c_wp) in blanks); blanks.difference_update(blanks_to_remove); original_tiles = None; original_rack = None
                         # --- Preview Checkbox Click ---
-                        elif preview_checkbox_rect and preview_checkbox_rect.collidepoint(x, y):
+                        elif preview_checkbox_rect and preview_checkbox_rect.collidepoint(x, y): # Use the rect from drawn_rects
                             preview_score_enabled = not preview_score_enabled
                         # --- Rack Button Clicks ---
                         current_player_idx = turn - 1
@@ -4915,20 +4966,20 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                             if 0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE and not tiles[row][col]:
                                 is_double_click = (last_left_click_pos == (row, col) and current_time - last_left_click_time < DOUBLE_CLICK_TIME)
                                 if is_double_click:
-                                     selected_square = None; typing = False; current_r = None; current_c = None
+                                     selected_square = None; typing = False; current_r = None; current_c = None # Reset cursor
                                      if word_positions and original_tiles and original_rack:
                                           for r_wp, c_wp, _ in word_positions: tiles[r_wp][c_wp] = original_tiles[r_wp][c_wp]
                                           racks[turn-1] = original_rack[:];
                                           if not is_ai[turn-1]: racks[turn-1].sort()
                                           blanks_to_remove = set((r_wp, c_wp) for r_wp, c_wp, _ in word_positions if (r_wp, c_wp) in blanks); blanks.difference_update(blanks_to_remove); word_positions = []; original_tiles = None; original_rack = None
-                                elif selected_square is None or selected_square[:2] != (row, col): selected_square = (row, col, "right"); typing = False; word_positions = []; current_r = None; current_c = None
+                                elif selected_square is None or selected_square[:2] != (row, col): selected_square = (row, col, "right"); typing = False; word_positions = []; current_r = None; current_c = None # Reset cursor
                                 elif selected_square[2] == "right": selected_square = (row, col, "down")
-                                elif selected_square[2] == "down": selected_square = None; current_r = None; current_c = None
+                                elif selected_square[2] == "down": selected_square = None; current_r = None; current_c = None # Reset cursor
                                 last_left_click_pos = (row, col); last_left_click_time = current_time
-                            else: selected_square = None; current_r = None; current_c = None
+                            else: selected_square = None; current_r = None; current_c = None # Reset cursor
 
                     # --- Handle clicks within dialogs (Exchange, Hint, All Words) ---
-                    elif exchanging: # Use elif
+                    elif exchanging:
                         clicked_tile = False
                         for i, rect in enumerate(tile_rects):
                             if rect.collidepoint(x, y): selected_tiles.add(i) if i not in selected_tiles else selected_tiles.remove(i); clicked_tile = True; break
@@ -4944,7 +4995,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                     exchanging = False; selected_tiles.clear(); consecutive_zero_point_turns += 1; exchange_count += 1; pass_count = 0; human_played = True; paused_for_power_tile = False; paused_for_bingo_practice = False; turn = 3 - turn; last_played_highlight_coords = set()
                                 else: show_message_dialog("No tiles selected for exchange.", "Exchange Error")
                             elif cancel_button_rect and cancel_button_rect.collidepoint(x, y): exchanging = False; selected_tiles.clear()
-                    elif hinting: # Use elif
+                    elif hinting:
                         clicked_in_dialog = False
                         if play_button_rect and play_button_rect.collidepoint(x, y) and selected_hint_index is not None and selected_hint_index < len(hint_moves):
                             clicked_in_dialog = True; selected_move = None; is_simulation_result = bool(hint_moves and isinstance(hint_moves[0], dict) and 'final_score' in hint_moves[0])
@@ -4952,125 +5003,149 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                             else: selected_move = hint_moves[selected_hint_index]
 
                             if selected_move and isinstance(selected_move, dict):
-                                player_who_played = turn
+                                player_who_played = turn # Store player number BEFORE turn changes
                                 move_rack = racks[player_who_played-1][:]; valid_for_practice = True
+                                # Check for "Only Fives" practice
                                 if practice_mode == "only_fives":
                                     if not does_move_form_five_letter_word(selected_move, tiles, blanks): show_message_dialog("At least one 5-letter word must be formed.", "Invalid Play"); valid_for_practice = False
+                                # --- 8-LETTER BINGO HINT PLAY LOGIC ---
                                 elif practice_mode == "eight_letter":
-                                    if practice_best_move:
+                                    if practice_best_move: # Ensure best move is known
                                         selected_score = selected_move.get('score', -1); max_score_8l = practice_best_move.get('score', 0)
-                                        if selected_score >= max_score_8l and max_score_8l > 0:
+                                        if selected_score >= max_score_8l and max_score_8l > 0: # Correct play
                                             print(f"8-Letter Hint Play CORRECT! Played: '{selected_move.get('word_with_blanks')}' ({selected_score} pts)");
+                                            # --- MODIFICATION: Pass board_tile_counts ---
                                             _next_turn, _drawn, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
                                             human_played = True; hinting = False; practice_solved = True; showing_practice_end_dialog = True; practice_end_message = f"Correct! You found the highest scoring bingo:\n{selected_move.get('word_with_blanks','')} ({selected_score} pts)"; last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', []))
-                                        else: print(f"8-Letter Hint Play INCORRECT. Score: {selected_score}, Target: {max_score_8l}"); show_message_dialog(f"Try again. The highest score is {max_score_8l}.", "8-Letter Bingo"); hinting = False
+                                        else: print(f"8-Letter Hint Play INCORRECT. Score: {selected_score}, Target: {max_score_8l}"); show_message_dialog(f"Try again. The highest score is {max_score_8l}.", "8-Letter Bingo"); hinting = False # Close hint dialog
                                     else: print("Error: Cannot validate 8-letter hint play, best move unknown."); show_message_dialog("Error: Best move data missing for validation.", "Internal Error"); hinting = False
-                                    valid_for_practice = False
+                                    valid_for_practice = False # Prevent falling through
+                                # --- END 8-LETTER BINGO HINT PLAY LOGIC ---
+                                # --- Power Tile Practice Hint Play Logic ---
                                 elif paused_for_power_tile:
                                     power_moves_filtered = [ m for m in all_moves if any(letter == current_power_tile for _, _, letter in m.get('newly_placed',[])) and is_word_length_allowed(len(m.get('word','')), number_checks) ]; max_power_score_filtered = max(m['score'] for m in power_moves_filtered) if power_moves_filtered else 0
                                     if selected_move.get('score', -1) >= max_power_score_filtered:
+                                        # --- MODIFICATION: Pass board_tile_counts ---
                                         next_turn, drawn_tiles, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
                                         human_played = True; hinting = False; paused_for_power_tile = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; luck_factor = 0.0;
                                         if drawn_tiles: drawn_leave_value = evaluate_leave(drawn_tiles); expected_draw_value_simple = current_turn_pool_quality_score * len(drawn_tiles); luck_factor = drawn_leave_value - expected_draw_value_simple; drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
                                         move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'pool_quality_before_draw': current_turn_pool_quality_score, 'luck_factor': luck_factor}); current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
-                                        updated_state.update({'turn': turn, 'human_played': human_played, 'hinting': hinting, 'paused_for_power_tile': paused_for_power_tile, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'tiles': tiles, 'blanks': blanks, 'scores': scores, 'board_tile_counts': board_tile_counts})
-                                        return updated_state
-                                    else: show_message_dialog(f"This is not the highest scoring move with {current_power_tile} matching the selected lengths!", "Incorrect Move"); valid_for_practice = False
+                                        # Pack state and return immediately
+                                        updated_state.update({'turn': turn, 'human_played': human_played, 'hinting': hinting, 'paused_for_power_tile': paused_for_power_tile, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'tiles': tiles, 'blanks': blanks, 'scores': scores, 'board_tile_counts': board_tile_counts}) # Pack counter
+                                        return updated_state # Return early
+                                    else: show_message_dialog(f"This is not the highest scoring move with {current_power_tile} matching the selected lengths!", "Incorrect Move"); valid_for_practice = False # Prevent finalization
+                                # --- Bingo Bango Bongo Hint Play Logic ---
                                 elif paused_for_bingo_practice:
                                     bingo_moves = [m for m in all_moves if m.get('is_bingo', False)]; max_bingo_score = max(m['score'] for m in bingo_moves) if bingo_moves else 0
                                     if selected_move.get('is_bingo', False) and selected_move.get('score', -1) >= max_bingo_score:
+                                        # --- MODIFICATION: Pass board_tile_counts ---
                                         next_turn, drawn_tiles, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
                                         human_played = True; hinting = False; paused_for_bingo_practice = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; luck_factor = 0.0;
                                         if drawn_tiles: drawn_leave_value = evaluate_leave(drawn_tiles); expected_draw_value_simple = current_turn_pool_quality_score * len(drawn_tiles); luck_factor = drawn_leave_value - expected_draw_value_simple; drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
+                                        # *** USE player_who_played FOR HISTORY ***
                                         move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'pool_quality_before_draw': current_turn_pool_quality_score, 'luck_factor': luck_factor}); current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
-                                        updated_state.update({'turn': turn, 'human_played': human_played, 'hinting': hinting, 'paused_for_bingo_practice': paused_for_bingo_practice, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'tiles': tiles, 'blanks': blanks, 'scores': scores, 'board_tile_counts': board_tile_counts})
-                                        return updated_state
-                                    else: show_message_dialog(f"This is not the highest scoring bingo! Max score is {max_bingo_score}.", "Incorrect Move"); valid_for_practice = False
+                                        # Pack state and return immediately
+                                        updated_state.update({'turn': turn, 'human_played': human_played, 'hinting': hinting, 'paused_for_bingo_practice': paused_for_bingo_practice, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'tiles': tiles, 'blanks': blanks, 'scores': scores, 'board_tile_counts': board_tile_counts}) # Pack counter
+                                        return updated_state # Return early
+                                    else: show_message_dialog(f"This is not the highest scoring bingo! Max score is {max_bingo_score}.", "Incorrect Move"); valid_for_practice = False # Prevent finalization
+                                # --- Standard Play or Valid "Only Fives" Finalization ---
                                 if valid_for_practice and practice_mode not in ["eight_letter"] and not paused_for_power_tile and not paused_for_bingo_practice:
+                                    # --- MODIFICATION: Pass board_tile_counts ---
                                     next_turn, drawn_tiles, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
                                     human_played = True; hinting = False; paused_for_power_tile = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0
                                     luck_factor = 0.0;
                                     if drawn_tiles: drawn_leave_value = evaluate_leave(drawn_tiles); expected_draw_value_simple = current_turn_pool_quality_score * len(drawn_tiles); luck_factor = drawn_leave_value - expected_draw_value_simple; drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
+                                    # *** USE player_who_played FOR HISTORY ***
                                     move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'pool_quality_before_draw': current_turn_pool_quality_score, 'luck_factor': luck_factor}); current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
-                        elif is_simulation_result and not selected_move: show_message_dialog("Error retrieving move data from selected simulation result.", "Internal Error")
-                    elif ok_button_rect and ok_button_rect.collidepoint(x, y): clicked_in_dialog = True; hinting = False
-                    elif all_words_button_rect and all_words_button_rect.collidepoint(x, y):
-                        clicked_in_dialog = True; hinting = False; showing_all_words = True;
+                            elif is_simulation_result and not selected_move: show_message_dialog("Error retrieving move data from selected simulation result.", "Internal Error")
+                        elif ok_button_rect and ok_button_rect.collidepoint(x, y): clicked_in_dialog = True; hinting = False
+                        elif all_words_button_rect and all_words_button_rect.collidepoint(x, y):
+                            clicked_in_dialog = True; hinting = False; showing_all_words = True;
+                            # *** Use the updated all_moves from state ***
+                            current_all_moves = all_moves # Use the version potentially updated by Suggest
+                            if practice_mode == "eight_letter": moves_for_all = practice_target_moves
+                            elif practice_mode == "power_tiles" and paused_for_power_tile: moves_for_all = sorted([m for m in current_all_moves if any(letter == current_power_tile for _, _, letter in m.get('newly_placed',[])) and is_word_length_allowed(len(m.get('word','')), number_checks)], key=lambda m: m['score'], reverse=True)
+                            elif practice_mode == "bingo_bango_bongo" and paused_for_bingo_practice: moves_for_all = sorted([m for m in current_all_moves if m.get('is_bingo', False)], key=lambda m: m['score'], reverse=True)
+                            else: moves_for_all = current_all_moves # Use potentially updated all_moves
+                            selected_hint_index = 0 if moves_for_all else None; all_words_scroll_offset = 0
+                        elif hint_rects:
+                            for i, rect in enumerate(hint_rects):
+                                if rect.collidepoint(x, y) and i < len(hint_moves): clicked_in_dialog = True; selected_hint_index = i; break
+                        dialog_width_hint, dialog_height_hint = 400, 280 # Adjusted height
+                        dialog_rect_hint = pygame.Rect((WINDOW_WIDTH - dialog_width_hint) // 2, (WINDOW_HEIGHT - dialog_height_hint) // 2, dialog_width_hint, dialog_height_hint)
+                        if dialog_rect_hint.collidepoint(x,y) and not clicked_in_dialog: pass
+                    elif showing_all_words:
+                        clicked_in_dialog = False;
+                        # *** Use the updated all_moves from state ***
                         current_all_moves = all_moves
                         if practice_mode == "eight_letter": moves_for_all = practice_target_moves
                         elif practice_mode == "power_tiles" and paused_for_power_tile: moves_for_all = sorted([m for m in current_all_moves if any(letter == current_power_tile for _, _, letter in m.get('newly_placed',[])) and is_word_length_allowed(len(m.get('word','')), number_checks)], key=lambda m: m['score'], reverse=True)
                         elif practice_mode == "bingo_bango_bongo" and paused_for_bingo_practice: moves_for_all = sorted([m for m in current_all_moves if m.get('is_bingo', False)], key=lambda m: m['score'], reverse=True)
-                        else: moves_for_all = current_all_moves
-                        selected_hint_index = 0 if moves_for_all else None; all_words_scroll_offset = 0
-                    elif hint_rects:
-                        for i, rect in enumerate(hint_rects):
-                            if rect.collidepoint(x, y) and i < len(hint_moves): clicked_in_dialog = True; selected_hint_index = i; break
-                    dialog_width_hint, dialog_height_hint = 400, 280 # Adjusted height
-                    dialog_rect_hint = pygame.Rect((WINDOW_WIDTH - dialog_width_hint) // 2, (WINDOW_HEIGHT - dialog_height_hint) // 2, dialog_width_hint, dialog_height_hint)
-                    if dialog_rect_hint.collidepoint(x,y) and not clicked_in_dialog: pass # Clicked inside dialog but not on a button/hint
-                elif showing_all_words: # Use elif
-                    clicked_in_dialog = False;
-                    current_all_moves = all_moves
-                    if practice_mode == "eight_letter": moves_for_all = practice_target_moves
-                    elif practice_mode == "power_tiles" and paused_for_power_tile: moves_for_all = sorted([m for m in current_all_moves if any(letter == current_power_tile for _, _, letter in m.get('newly_placed',[])) and is_word_length_allowed(len(m.get('word','')), number_checks)], key=lambda m: m['score'], reverse=True)
-                    elif practice_mode == "bingo_bango_bongo" and paused_for_bingo_practice: moves_for_all = sorted([m for m in current_all_moves if m.get('is_bingo', False)], key=lambda m: m['score'], reverse=True)
-                    else: moves_for_all = current_all_moves
-                    if all_words_play_rect and all_words_play_rect.collidepoint(x, y) and selected_hint_index is not None and selected_hint_index < len(moves_for_all):
-                        clicked_in_dialog = True; selected_move = moves_for_all[selected_hint_index];
-                        player_who_played = turn
-                        move_rack = racks[player_who_played-1][:];
-                        valid_for_practice = True
-                        if practice_mode == "only_fives":
-                            if not does_move_form_five_letter_word(selected_move, tiles, blanks): show_message_dialog("At least one 5-letter word must be formed.", "Invalid Play"); valid_for_practice = False
-                        elif practice_mode == "eight_letter":
-                             if practice_best_move:
-                                 selected_score = selected_move.get('score', -1); max_score_8l = practice_best_move.get('score', 0)
-                                 if selected_score >= max_score_8l and max_score_8l > 0:
-                                     print(f"8-Letter All Words Play CORRECT! Played: '{selected_move.get('word_with_blanks')}' ({selected_score} pts)");
-                                     _next_turn, _drawn, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
-                                     human_played = True; showing_all_words = False; practice_solved = True; showing_practice_end_dialog = True; practice_end_message = f"Correct! You found the highest scoring bingo:\n{selected_move.get('word_with_blanks','')} ({selected_score} pts)"; last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', []))
-                                 else: print(f"8-Letter All Words Play INCORRECT. Score: {selected_score}, Target: {max_score_8l}"); show_message_dialog(f"Try again. The highest score is {max_score_8l}.", "8-Letter Bingo"); showing_all_words = False
-                             else: print("Error: Cannot validate 8-letter all words play, best move unknown."); show_message_dialog("Error: Best move data missing for validation.", "Internal Error"); showing_all_words = False
-                             valid_for_practice = False
-                        if valid_for_practice:
-                            if paused_for_bingo_practice:
-                                bingo_moves = [m for m in all_moves if m.get('is_bingo', False)]; max_bingo_score = max(m['score'] for m in bingo_moves) if bingo_moves else 0
-                                if selected_move.get('is_bingo', False) and selected_move.get('score', -1) >= max_bingo_score:
+                        else: moves_for_all = current_all_moves # Use potentially updated all_moves
+                        if all_words_play_rect and all_words_play_rect.collidepoint(x, y) and selected_hint_index is not None and selected_hint_index < len(moves_for_all):
+                            clicked_in_dialog = True; selected_move = moves_for_all[selected_hint_index];
+                            player_who_played = turn # Store player number BEFORE turn changes
+                            move_rack = racks[player_who_played-1][:];
+                            valid_for_practice = True
+                            # --- ADD "Only Fives" Check ---
+                            if practice_mode == "only_fives":
+                                if not does_move_form_five_letter_word(selected_move, tiles, blanks): show_message_dialog("At least one 5-letter word must be formed.", "Invalid Play"); valid_for_practice = False
+                            # --- ADD 8-Letter Check (Similar to hint dialog) ---
+                            elif practice_mode == "eight_letter":
+                                 if practice_best_move:
+                                     selected_score = selected_move.get('score', -1); max_score_8l = practice_best_move.get('score', 0)
+                                     if selected_score >= max_score_8l and max_score_8l > 0: # Correct
+                                         print(f"8-Letter All Words Play CORRECT! Played: '{selected_move.get('word_with_blanks')}' ({selected_score} pts)");
+                                         # --- MODIFICATION: Pass board_tile_counts ---
+                                         _next_turn, _drawn, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
+                                         human_played = True; showing_all_words = False; practice_solved = True; showing_practice_end_dialog = True; practice_end_message = f"Correct! You found the highest scoring bingo:\n{selected_move.get('word_with_blanks','')} ({selected_score} pts)"; last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', []))
+                                     else: print(f"8-Letter All Words Play INCORRECT. Score: {selected_score}, Target: {max_score_8l}"); show_message_dialog(f"Try again. The highest score is {max_score_8l}.", "8-Letter Bingo"); showing_all_words = False # Close dialog
+                                 else: print("Error: Cannot validate 8-letter all words play, best move unknown."); show_message_dialog("Error: Best move data missing for validation.", "Internal Error"); showing_all_words = False
+                                 valid_for_practice = False # Prevent standard finalization
+                            # --- END 8-Letter Check ---
+                            if valid_for_practice: # Proceed only if valid for current practice mode and not 8-letter
+                                if paused_for_bingo_practice:
+                                    bingo_moves = [m for m in all_moves if m.get('is_bingo', False)]; max_bingo_score = max(m['score'] for m in bingo_moves) if bingo_moves else 0
+                                    if selected_move.get('is_bingo', False) and selected_move.get('score', -1) >= max_bingo_score:
+                                        # --- MODIFICATION: Pass board_tile_counts ---
+                                        next_turn, drawn_tiles, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
+                                        human_played = True; showing_all_words = False; paused_for_bingo_practice = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; luck_factor = 0.0;
+                                        if drawn_tiles: drawn_leave_value = evaluate_leave(drawn_tiles); expected_draw_value_simple = current_turn_pool_quality_score * len(drawn_tiles); luck_factor = drawn_leave_value - expected_draw_value_simple; drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
+                                        # *** USE player_who_played FOR HISTORY ***
+                                        move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'pool_quality_before_draw': current_turn_pool_quality_score, 'luck_factor': luck_factor}); current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
+                                        # Pack state and return immediately
+                                        updated_state.update({'turn': turn, 'human_played': human_played, 'showing_all_words': showing_all_words, 'paused_for_bingo_practice': paused_for_bingo_practice, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'tiles': tiles, 'blanks': blanks, 'scores': scores, 'board_tile_counts': board_tile_counts}) # Pack counter
+                                        return updated_state # Return early
+                                    else: show_message_dialog(f"This is not the highest scoring bingo! Max score is {max_bingo_score}.", "Incorrect Move")
+                                else: # Standard play or valid "Only Fives" play
+                                    # --- MODIFICATION: Pass board_tile_counts ---
                                     next_turn, drawn_tiles, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
-                                    human_played = True; showing_all_words = False; paused_for_bingo_practice = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; luck_factor = 0.0;
+                                    human_played = True; showing_all_words = False; paused_for_power_tile = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0
+                                    luck_factor = 0.0;
                                     if drawn_tiles: drawn_leave_value = evaluate_leave(drawn_tiles); expected_draw_value_simple = current_turn_pool_quality_score * len(drawn_tiles); luck_factor = drawn_leave_value - expected_draw_value_simple; drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
+                                    # *** USE player_who_played FOR HISTORY ***
                                     move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'pool_quality_before_draw': current_turn_pool_quality_score, 'luck_factor': luck_factor}); current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
-                                    updated_state.update({'turn': turn, 'human_played': human_played, 'showing_all_words': showing_all_words, 'paused_for_bingo_practice': paused_for_bingo_practice, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'tiles': tiles, 'blanks': blanks, 'scores': scores, 'board_tile_counts': board_tile_counts})
-                                    return updated_state
-                                else: show_message_dialog(f"This is not the highest scoring bingo! Max score is {max_bingo_score}.", "Incorrect Move")
-                            else: # Standard play or valid "Only Fives" play
-                                next_turn, drawn_tiles, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
-                                human_played = True; showing_all_words = False; paused_for_power_tile = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0
-                                luck_factor = 0.0;
-                                if drawn_tiles: drawn_leave_value = evaluate_leave(drawn_tiles); expected_draw_value_simple = current_turn_pool_quality_score * len(drawn_tiles); luck_factor = drawn_leave_value - expected_draw_value_simple; drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
-                                move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'pool_quality_before_draw': current_turn_pool_quality_score, 'luck_factor': luck_factor}); current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
-                    elif all_words_ok_rect and all_words_ok_rect.collidepoint(x, y): clicked_in_dialog = True; showing_all_words = False
-                    elif all_words_rects:
-                        for rect, idx in all_words_rects:
-                            if rect.collidepoint(x, y): clicked_in_dialog = True; selected_hint_index = idx; break
-                    dialog_rect_all = pygame.Rect((WINDOW_WIDTH - ALL_WORDS_DIALOG_WIDTH) // 2, (WINDOW_HEIGHT - ALL_WORDS_DIALOG_HEIGHT) // 2, ALL_WORDS_DIALOG_WIDTH, ALL_WORDS_DIALOG_HEIGHT)
-                    if dialog_rect_all.collidepoint(x,y) and not clicked_in_dialog: pass # Clicked inside dialog but not on button/item
+                        elif all_words_ok_rect and all_words_ok_rect.collidepoint(x, y): clicked_in_dialog = True; showing_all_words = False
+                        elif all_words_rects:
+                            for rect, idx in all_words_rects:
+                                if rect.collidepoint(x, y): clicked_in_dialog = True; selected_hint_index = idx; break
+                        dialog_rect_all = pygame.Rect((WINDOW_WIDTH - ALL_WORDS_DIALOG_WIDTH) // 2, (WINDOW_HEIGHT - ALL_WORDS_DIALOG_HEIGHT) // 2, ALL_WORDS_DIALOG_WIDTH, ALL_WORDS_DIALOG_HEIGHT)
+                        if dialog_rect_all.collidepoint(x,y) and not clicked_in_dialog: pass
 
-        # --- Right Click Handling ---
-        elif event.button == 3:
-            selected_square = None; current_r = None; current_c = None
-            if typing:
-                if original_tiles and original_rack:
-                    for r_wp, c_wp, _ in word_positions: tiles[r_wp][c_wp] = original_tiles[r_wp][c_wp]
-                    racks[turn-1] = original_rack[:];
-                    if not is_ai[turn-1]: racks[turn-1].sort()
-                    blanks_to_remove = set((r_wp, c_wp) for r_wp, c_wp, _ in word_positions if (r_wp, c_wp) in blanks); blanks.difference_update(blanks_to_remove)
-                typing = False; typing_start = None; typing_direction = None; word_positions = []; original_tiles = None; original_rack = None;
+            # --- Right Click Handling ---
+            elif event.button == 3:
+                selected_square = None; current_r = None; current_c = None # Reset cursor
+                if typing:
+                    if original_tiles and original_rack:
+                        for r_wp, c_wp, _ in word_positions: tiles[r_wp][c_wp] = original_tiles[r_wp][c_wp]
+                        racks[turn-1] = original_rack[:];
+                        if not is_ai[turn-1]: racks[turn-1].sort()
+                        blanks_to_remove = set((r_wp, c_wp) for r_wp, c_wp, _ in word_positions if (r_wp, c_wp) in blanks); blanks.difference_update(blanks_to_remove)
+                    typing = False; typing_start = None; typing_direction = None; word_positions = []; original_tiles = None; original_rack = None;
 
 
 
-        # --- Pack updated state variables into the return dictionary ---
-        # --- CORRECTED INDENTATION FOR THIS BLOCK ---
+        # Pack updated state variables into the return dictionary
         updated_state.update({
             'running_inner': running_inner, 'return_to_mode_selection': return_to_mode_selection,
             'dropdown_open': dropdown_open,
@@ -5112,10 +5187,10 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
             'current_r': current_r, 'current_c': current_c, # Pack cursor state
             'typing_direction': typing_direction, 'typing_start': typing_start, # Pack typing direction and start
             'board_tile_counts': board_tile_counts, # Pack updated counter
+            # --- MODIFICATION: Pack exchange info ---
             'best_exchange_for_hint': best_exchange_for_hint,
             'best_exchange_score_for_hint': best_exchange_score_for_hint
         })
-        # --- END CORRECTED INDENTATION ---
 
         return updated_state
 
@@ -5217,7 +5292,8 @@ def get_replay_state(turn_idx, initial_racks):
 
 
 # Function to Replace: ai_turn
-# REASON: Reduce print statements for batch mode performance.
+# REASON: Fix NameError by calling find_all_words_formed_cython instead of
+#         the non-existent find_all_words_formed in the "Only Fives" filter.
 
 def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_count, exchange_count, consecutive_zero_point_turns, player_names, board_tile_counts, dropdown_open=False, hinting=False, showing_all_words=False, letter_checks=None): # Added board_tile_counts
     """
@@ -5225,6 +5301,7 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
     Restored simpler Power Tile pause logic.
     Uses board_tile_counts for evaluations.
     Reduced printing for batch mode.
+    Calls correct Cython helper for "Only Fives" check.
     """
     global last_word, last_score, last_start, last_direction, move_history, current_replay_turn, practice_mode, GADDAG_STRUCTURE, last_played_highlight_coords
     global is_solving_endgame, USE_ENDGAME_SOLVER, USE_AI_SIMULATION, paused_for_bingo_practice
@@ -5253,7 +5330,11 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
         move_rack_before = racks[player_idx][:]; exchanged_tiles_for_history = []; next_turn = turn; drawn_tiles = []; newly_placed = []; move_type = ''; score = 0; word = ''; positions = []; blanks_used = set(); coord = ''; word_with_blanks = ''; is_bingo = False; luck_factor = 0.0
         move_type = 'pass'; score = 0; consecutive_zero_point_turns += 1; pass_count += 1; exchange_count = 0; next_turn = 3 - turn; last_played_highlight_coords = set()
         end_turn_time = time.time(); turn_duration = end_turn_time - start_turn_time
-        move_data = { 'player': turn, 'move_type': move_type, 'rack': move_rack_before, 'score': score, 'word': word, 'positions': positions, 'blanks': blanks_used, 'drawn': drawn_tiles, 'coord': coord, 'word_with_blanks': word_with_blanks, 'is_bingo': is_bingo, 'turn_duration': turn_duration, 'pool_quality_before_draw': 0.0, 'luck_factor': luck_factor }
+        # Calculate pool quality before draw (even though it's a pass)
+        remaining_tiles_dict_for_eval = get_remaining_tiles(racks[player_idx], board_tile_counts)
+        pool_analysis_for_eval = analyze_unseen_pool(remaining_tiles_dict_for_eval)
+        pool_quality_score = pool_analysis_for_eval.get('quality_score', 0.0)
+        move_data = { 'player': turn, 'move_type': move_type, 'rack': move_rack_before, 'score': score, 'word': word, 'positions': positions, 'blanks': blanks_used, 'drawn': drawn_tiles, 'coord': coord, 'word_with_blanks': word_with_blanks, 'is_bingo': is_bingo, 'turn_duration': turn_duration, 'pool_quality_before_draw': pool_quality_score, 'luck_factor': luck_factor }
         move_history.append(move_data); current_replay_turn = len(move_history)
         return next_turn, first_play, pass_count, exchange_count, consecutive_zero_point_turns, [], dropdown_open, hinting, showing_all_words, False, None, False, set()
     # --- End GADDAG Status Check ---
@@ -5320,7 +5401,9 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
                  if 0 <= r < GRID_SIZE and 0 <= c < GRID_SIZE:
                      temp_tiles[r][c] = letter
                      if (r, c) in move.get('blanks', set()): temp_blanks.add((r, c))
-            words_formed_details = find_all_words_formed(newly_placed_details, temp_tiles)
+            # --- FIX: Call Cython version ---
+            words_formed_details = find_all_words_formed_cython(newly_placed_details, temp_tiles)
+            # --- END FIX ---
             if any(len("".join(t[2] for t in word_detail)) == 5 for word_detail in words_formed_details): filtered_moves.append(move)
         all_moves = filtered_moves;
         # --- COMMENTED OUT ---
@@ -5458,6 +5541,9 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
 
 
 
+
+
+
 #$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 #$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 '''
@@ -5475,7 +5561,7 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
 
 
 # Function to Replace: initialize_game
-# REASON: Unpack and store the visualize_batch setting for batch mode.
+# REASON: Add debug print after resetting practice_target_moves for 8-letter mode.
 
 def initialize_game(selected_mode_result, return_data, main_called_flag):
     """
@@ -5484,6 +5570,7 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
     Returns the current GADDAG loading status along with other state variables.
     Initializes and populates board_tile_counts.
     Unpacks visualize_batch setting for batch mode.
+    Adds debug print for 8-letter practice init.
     """
     global GADDAG_STRUCTURE, gaddag_loading_status, gaddag_load_thread # Allow modification
 
@@ -5656,6 +5743,12 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
                     if tiles[r][c]:
                         board_tile_counts[tiles[r][c]] += 1
             print("--- initialize_game(): Loaded state from 8-letter practice. ---")
+            # --- ADDED DEBUG PRINT ---
+            practice_target_moves = [] # Reset here
+            print(f"  DEBUG initialize_game (8-letter): Reset practice_target_moves. Length is now: {len(practice_target_moves)}")
+            # --- END ADDED DEBUG PRINT ---
+            practice_best_move = None
+            all_moves = []
         elif practice_state: # Assuming other practice modes might also have initial state
             # ... (Other practice setup - unchanged) ...
             print("Loading state from other practice mode...");
@@ -5684,11 +5777,13 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
 
         initial_racks = [rack[:] for rack in racks]
 
-        if practice_mode == "eight_letter":
-            print("--- initialize_game(): Performing 8-letter practice specific init (move gen deferred)... ---")
-            practice_target_moves = []
-            practice_best_move = None
-            all_moves = []
+        # --- MOVED 8-letter specific init here ---
+        # if practice_mode == "eight_letter":
+        #     print("--- initialize_game(): Performing 8-letter practice specific init (move gen deferred)... ---")
+        #     practice_target_moves = []
+        #     practice_best_move = None
+        #     all_moves = []
+        # --- END MOVED ---
 
     elif selected_mode_result is None:
         print("--- initialize_game(): Mode selection returned None. Exiting. ---")
@@ -5764,8 +5859,10 @@ def draw_player_racks(screen, racks_to_display, scores_to_display, turn_to_displ
 
 
 
-# python
-# MODIFIED: Removed premature return after simulation config handling
+# Function to Replace: handle_mouse_down_event (Complete)
+# REASON: Add debug print immediately before the practice_mode check
+#         within the Suggest button handler.
+
 def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects parameter
         """
         Handles MOUSEBUTTONDOWN events for the main game loop.
@@ -5781,6 +5878,8 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
         Reads global gaddag_loading_status directly for AI actions.
         Passes board_tile_counts to play_hint_move and run_ai_simulation.
         Calls find_best_exchange_option after simulation for human hints.
+        Corrects Suggest logic AGAIN for 8-Letter Bingo mode.
+        Adds debug print before practice_mode check in Suggest handler.
         """
         # --- Access global directly for GADDAG status check ---
         global gaddag_loading_status, GADDAG_STRUCTURE # Need GADDAG_STRUCTURE too
@@ -5796,12 +5895,16 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
         restart_practice_mode = state['restart_practice_mode'] # Unpack flag
         stats_total_content_height = state.get('stats_total_content_height', 0) # Use .get() for safety
         board_tile_counts = state['board_tile_counts'] # Unpack the counter
+        practice_target_moves = state['practice_target_moves'] # <<< Unpack practice_target_moves
         # --- Initialize local cursor variables from state ---
         current_r = state.get('current_r')
         current_c = state.get('current_c')
         typing_direction = state.get('typing_direction')
         typing_start = state.get('typing_start')
         # --- End Initialize local cursor variables ---
+        # --- Unpack exchange hint info ---
+        best_exchange_for_hint = state.get('best_exchange_for_hint') # Use .get for safety
+        best_exchange_score_for_hint = state.get('best_exchange_score_for_hint', -float('inf')) # Use .get for safety
 
         # --- Get Rects from the drawn_rects dictionary ---
         practice_play_again_rect = drawn_rects.get('practice_play_again_rect')
@@ -5854,8 +5957,8 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
         running_inner = True; return_to_mode_selection = False; batch_stop_requested = False; human_played = False
         x, y = event.pos
         # --- Initialize variables for hint dialog ---
-        best_exchange_for_hint = None
-        best_exchange_score_for_hint = -float('inf')
+        # best_exchange_for_hint = None # Already unpacked
+        # best_exchange_score_for_hint = -float('inf') # Already unpacked
 
         # --- Practice End Dialog Handling ---
         if showing_practice_end_dialog:
@@ -5935,13 +6038,8 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                         print("Overriding bag constraints and setting racks."); racks[0] = specify_rack_proposed_racks[0][:]; racks[1] = specify_rack_proposed_racks[1][:]
                         if not is_ai[0]: racks[0].sort()
                         if not is_ai[1]: racks[1].sort()
-                        if 0 <= turn-1 < len(is_ai) and not is_ai[turn-1]:
-                            # *** Check GLOBAL status AND GADDAG_STRUCTURE directly ***
-                            if gaddag_loading_status == 'loaded' and GADDAG_STRUCTURE is not None:
-                                print("Regenerating moves after Specify Rack (Override)..."); all_moves = generate_all_moves_gaddag(racks[turn-1], tiles, board, blanks, GADDAG_STRUCTURE.root);
-                            elif gaddag_loading_status == 'loading': print("Specify Rack: GADDAG still loading, cannot regenerate moves yet."); all_moves = []
-                            else: print("Specify Rack: GADDAG not loaded/error or structure missing, cannot regenerate moves."); all_moves = []
-                            if all_moves is None: all_moves = []
+                        # --- REMOVED automatic move regeneration ---
+                        all_moves = [] # Explicitly clear moves after setting rack
                         specifying_rack = False; confirming_override = False; specify_rack_inputs = ["", ""]; specify_rack_active_input = None; specify_rack_original_racks = [[], []]; specify_rack_proposed_racks = [[], []]; dropdown_open = False
                 updated_state.update({'racks': racks, 'all_moves': all_moves, 'specifying_rack': specifying_rack, 'confirming_override': confirming_override, 'specify_rack_inputs': specify_rack_inputs, 'specify_rack_active_input': specify_rack_active_input, 'specify_rack_original_racks': specify_rack_original_racks, 'specify_rack_proposed_racks': specify_rack_proposed_racks, 'dropdown_open': dropdown_open})
                 return updated_state
@@ -5973,13 +6071,8 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                             print("Specified racks are valid or don't require bag tiles. Setting racks."); racks[0] = proposed_racks_temp[0][:]; racks[1] = proposed_racks_temp[1][:]
                             if not is_ai[0]: racks[0].sort()
                             if not is_ai[1]: racks[1].sort()
-                            if 0 <= turn-1 < len(is_ai) and not is_ai[turn-1]:
-                                # *** Check GLOBAL status AND GADDAG_STRUCTURE directly ***
-                                if gaddag_loading_status == 'loaded' and GADDAG_STRUCTURE is not None:
-                                    print("Regenerating moves after Specify Rack..."); all_moves = generate_all_moves_gaddag(racks[turn-1], tiles, board, blanks, GADDAG_STRUCTURE.root);
-                                elif gaddag_loading_status == 'loading': print("Specify Rack: GADDAG still loading, cannot regenerate moves yet."); all_moves = []
-                                else: print("Specify Rack: GADDAG not loaded/error or structure missing, cannot regenerate moves."); all_moves = []
-                                if all_moves is None: all_moves = []
+                            # --- REMOVED automatic move regeneration ---
+                            all_moves = [] # Explicitly clear moves after setting rack
                             specifying_rack = False; specify_rack_inputs = ["", ""]; specify_rack_active_input = None; specify_rack_original_racks = [[], []]; dropdown_open = False
                 else: specify_rack_active_input = None
             updated_state.update({'racks': racks, 'all_moves': all_moves, 'specifying_rack': specifying_rack, 'confirming_override': confirming_override, 'specify_rack_inputs': specify_rack_inputs, 'specify_rack_active_input': specify_rack_active_input, 'specify_rack_original_racks': specify_rack_original_racks, 'specify_rack_proposed_racks': specify_rack_proposed_racks, 'dropdown_open': dropdown_open})
@@ -6078,28 +6171,40 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                         is_human_turn_or_paused_practice = not is_ai[turn-1] or paused_for_power_tile or paused_for_bingo_practice
                         # --- Suggest Button Click ---
                         if suggest_rect_base and suggest_rect_base.collidepoint(x, y) and is_human_turn_or_paused_practice:
-                            # *** Check GLOBAL status AND GADDAG_STRUCTURE directly ***
-                            if gaddag_loading_status != 'loaded' or GADDAG_STRUCTURE is None:
-                                show_message_dialog("Cannot suggest moves: AI data is not loaded or available.", "Loading")
-                            else:
-                                moves_to_hint = []; current_player_rack = racks[turn-1]
-                                print(f"DEBUG: Suggest clicked. Regenerating moves for Player {turn}, Rack: {''.join(sorted(current_player_rack))}")
-                                tiles_copy = [row[:] for row in tiles]; blanks_copy = blanks.copy(); board_copy = board
-                                # *** Generate into temporary variable ***
-                                all_moves_generated_for_hint = generate_all_moves_gaddag(current_player_rack, tiles_copy, board_copy, blanks_copy, GADDAG_STRUCTURE.root)
-                                if all_moves_generated_for_hint is None: all_moves_generated_for_hint = []; print("DEBUG: generate_all_moves_gaddag returned None for Suggest.")
-                                else: print(f"DEBUG: generate_all_moves_gaddag returned {len(all_moves_generated_for_hint)} moves for Suggest.")
+                            # --- ADD DEBUG PRINT HERE ---
+                            print(f"DEBUG Suggest Handler: practice_mode = '{practice_mode}' (Type: {type(practice_mode)})")
+                            # --- END DEBUG PRINT ---
+                            # --- MODIFICATION START: Correct 8-Letter Logic ---
+                            if practice_mode == "eight_letter":
+                                print(f"DEBUG: Suggest clicked (8-Letter). Using practice_target_moves (length: {len(practice_target_moves)}).")
+                                moves_to_hint = practice_target_moves if practice_target_moves else []
+                                all_moves = practice_target_moves # Ensure all_moves state is also correct
+                            # --- END MODIFICATION ---
+                            else: # Standard game or other practice modes
+                                # *** Check GLOBAL status AND GADDAG_STRUCTURE directly ***
+                                if gaddag_loading_status != 'loaded' or GADDAG_STRUCTURE is None:
+                                    show_message_dialog("Cannot suggest moves: AI data is not loaded or available.", "Loading")
+                                    moves_to_hint = [] # Ensure it's empty if GADDAG not ready
+                                    all_moves = []
+                                else:
+                                    current_player_rack = racks[turn-1]
+                                    print(f"DEBUG: Suggest clicked (Standard/Other Practice). Regenerating moves for Player {turn}, Rack: {''.join(sorted(current_player_rack))}")
+                                    tiles_copy = [row[:] for row in tiles]; blanks_copy = blanks.copy(); board_copy = board
+                                    # *** Generate into temporary variable ***
+                                    all_moves_generated_for_hint = generate_all_moves_gaddag(current_player_rack, tiles_copy, board_copy, blanks_copy, GADDAG_STRUCTURE.root)
+                                    if all_moves_generated_for_hint is None: all_moves_generated_for_hint = []; print("DEBUG: generate_all_moves_gaddag returned None for Suggest.")
+                                    else: print(f"DEBUG: generate_all_moves_gaddag returned {len(all_moves_generated_for_hint)} moves for Suggest.")
 
-                                # *** Use the temporary variable for filtering/display ***
-                                if practice_mode == "eight_letter": moves_to_hint = practice_target_moves if practice_target_moves else [] # Use existing practice targets
-                                elif practice_mode == "power_tiles" and paused_for_power_tile and current_power_tile: power_moves_hint = [m for m in all_moves_generated_for_hint if any(letter == current_power_tile for _, _, letter in m.get('newly_placed',[])) and is_word_length_allowed(len(m.get('word','')), number_checks)]; moves_to_hint = sorted(power_moves_hint, key=lambda m: m['score'], reverse=True)
-                                elif practice_mode == "bingo_bango_bongo" and paused_for_bingo_practice: bingo_moves_hint = [m for m in all_moves_generated_for_hint if m.get('is_bingo', False)]; moves_to_hint = sorted(bingo_moves_hint, key=lambda m: m['score'], reverse=True)
-                                else: moves_to_hint = all_moves_generated_for_hint # Use generated moves for standard game
+                                    # Filter for other practice modes if needed
+                                    if practice_mode == "power_tiles" and paused_for_power_tile and current_power_tile: power_moves_hint = [m for m in all_moves_generated_for_hint if any(letter == current_power_tile for _, _, letter in m.get('newly_placed',[])) and is_word_length_allowed(len(m.get('word','')), number_checks)]; moves_to_hint = sorted(power_moves_hint, key=lambda m: m['score'], reverse=True)
+                                    elif practice_mode == "bingo_bango_bongo" and paused_for_bingo_practice: bingo_moves_hint = [m for m in all_moves_generated_for_hint if m.get('is_bingo', False)]; moves_to_hint = sorted(bingo_moves_hint, key=lambda m: m['score'], reverse=True)
+                                    else: moves_to_hint = all_moves_generated_for_hint # Use generated moves for standard game
+                                    # *** Store the generated moves back into the main state's all_moves ***
+                                    all_moves = all_moves_generated_for_hint # Update the state variable
 
-                                hint_moves = moves_to_hint[:5]; hinting = True; selected_hint_index = 0 if hint_moves else None
-                                # *** Store the generated moves back into the main state's all_moves ***
-                                all_moves = all_moves_generated_for_hint # Update the state variable
-                                updated_state['all_moves'] = all_moves # Ensure it's packed
+                            # --- Common logic for setting hint state ---
+                            hint_moves = moves_to_hint[:5]; hinting = True; selected_hint_index = 0 if hint_moves else None
+                            updated_state['all_moves'] = all_moves # Ensure it's packed
 
                         # --- Simulate Button Click ---
                         elif simulate_button_rect and simulate_button_rect.collidepoint(x, y) and is_human_turn_or_paused_practice:
@@ -6244,7 +6349,8 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                         elif hint_rects:
                             for i, rect in enumerate(hint_rects):
                                 if rect.collidepoint(x, y) and i < len(hint_moves): clicked_in_dialog = True; selected_hint_index = i; break
-                        dialog_width_hint, dialog_height_hint = 400, 250; dialog_rect_hint = pygame.Rect((WINDOW_WIDTH - dialog_width_hint) // 2, (WINDOW_HEIGHT - dialog_height_hint) // 2, dialog_width_hint, dialog_height_hint)
+                        dialog_width_hint, dialog_height_hint = 400, 280 # Adjusted height
+                        dialog_rect_hint = pygame.Rect((WINDOW_WIDTH - dialog_width_hint) // 2, (WINDOW_HEIGHT - dialog_height_hint) // 2, dialog_width_hint, dialog_height_hint)
                         if dialog_rect_hint.collidepoint(x,y) and not clicked_in_dialog: pass
                     elif showing_all_words:
                         clicked_in_dialog = False;
@@ -7652,13 +7758,16 @@ def handle_ai_turn_trigger(state):
 
 
 
-# python
+# Function to Replace: handle_deferred_practice_init
+# REASON: Remove the verbose debug print that runs every frame.
+
 def handle_deferred_practice_init(state):
     """
     Handles the deferred move generation specifically for 8-Letter Bingo practice
     once the GADDAG is loaded. Updates and returns the game state.
     Reads global gaddag_loading_status and GADDAG_STRUCTURE directly.
     Removed reference to batch_stop_requested.
+    Removed verbose debug print.
     """
     # --- Access global directly for GADDAG status check ---
     global gaddag_loading_status, GADDAG_STRUCTURE # Need GADDAG_STRUCTURE too
@@ -7680,18 +7789,35 @@ def handle_deferred_practice_init(state):
 
     # --- Deferred 8-Letter Practice Move Generation Logic (Moved from main) ---
     # *** Check GLOBAL status AND GADDAG_STRUCTURE directly ***
+    # --- REMOVED VERBOSE DEBUG PRINT 1 ---
+    # print(f"DEBUG handle_deferred_practice_init: practice_mode='{practice_mode}', practice_target_moves length: {len(practice_target_moves)}, gaddag_status='{gaddag_loading_status}'")
+
     if practice_mode == "eight_letter" and not practice_target_moves and gaddag_loading_status == 'loaded':
-        print("--- Main Loop: GADDAG loaded, generating 8-letter practice moves... ---")
+        # --- DEBUG PRINT 2: Conditions met, check GADDAG structure ---
+        print(f"--- Main Loop: Conditions met for 8-letter practice move gen. GADDAG_STRUCTURE is None? {GADDAG_STRUCTURE is None} ---") # Keep this one
+
         # *** Check GADDAG_STRUCTURE is not None ***
         if GADDAG_STRUCTURE is not None and racks and racks[0] is not None:
+             # --- DEBUG PRINT 3: About to generate moves ---
+             print(f"  DEBUG: Calling generate_all_moves_gaddag for rack: {''.join(sorted(racks[0]))}") # Keep this one
+             # --- DEBUG PRINT 3.5: Confirming IF block entered ---
+             print(f"  DEBUG: *** ENTERED GENERATION BLOCK ***") # Keep this one
              # Generate moves into a temporary variable first
              generated_moves = generate_all_moves_gaddag(racks[0], tiles, board, blanks, GADDAG_STRUCTURE.root)
+
+             # --- DEBUG PRINT 4: Result of generation ---
+             if generated_moves is None:
+                 print("  DEBUG: generate_all_moves_gaddag returned None!") # Keep this one
+                 generated_moves = [] # Treat None as empty list
+             else:
+                 print(f"  DEBUG: generate_all_moves_gaddag returned {len(generated_moves)} moves.") # Keep this one
+
              if generated_moves:
                  # Update state variables
                  state['practice_target_moves'] = generated_moves
                  state['practice_best_move'] = generated_moves[0] # Assumes sorted by score desc
                  state['all_moves'] = generated_moves # Also store in all_moves for consistency
-                 print(f"  Best move found: {state['practice_best_move']['word']} ({state['practice_best_move']['score']} pts)")
+                 print(f"  DEBUG: Successfully set practice_target_moves. Length is now: {len(state['practice_target_moves'])}. Best move: {state['practice_best_move']['word']} ({state['practice_best_move']['score']} pts)") # Keep this one
              else:
                  print("Error: No valid moves found for 8-letter practice setup (deferred gen)!")
                  show_message_dialog("Error: No possible moves found for this setup.", "Practice Error")
@@ -7709,7 +7835,7 @@ def handle_deferred_practice_init(state):
             # state['batch_stop_requested'] = True # REMOVED - Let main handle outer stop
     # *** Check GLOBAL status directly ***
     elif practice_mode == "eight_letter" and not practice_target_moves and gaddag_loading_status == 'loading':
-         print("--- Main Loop: Waiting for GADDAG to load for 8-letter practice... ---")
+         print("--- Main Loop: Waiting for GADDAG to load for 8-letter practice... ---") # Keep this one
 
 
     return state # Return the modified state dictionary
