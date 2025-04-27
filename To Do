@@ -16,6 +16,8 @@ To-Do List
 
 -- Create a separate CONSTANTS.py file
 
+-- How does the AI determine if it's the first or second play? Bug arose where P1 passed, AI 2 then encountered Invalid Play msg because it thought it was the first play because no tiles were on the board. Need to change how that's determined.
+
 -- Fix or replace the Mode Selection screen background pic. It's good but doesn't fit well in the frame.
 
 -- AI should try to estimate the opponent's rack based on the remaining pool, but the current logic treats all unseen tiles equally.
