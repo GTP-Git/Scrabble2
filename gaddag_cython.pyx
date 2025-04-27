@@ -1,5 +1,4 @@
-
-#Scrabble 26APR25 Cython V1
+#Scrabble 26APR25 Cython V2
 
 
 # gaddag_cython.pyx
@@ -39,7 +38,8 @@ def _gaddag_traverse(
     board,
     blanks,
     cross_check_sets,
-    gaddag_node,
+    gaddag_node, # Current node in GADDAG traversal
+    object gaddag_root_node, # <<< ADDED: Root of the GADDAG structure
     current_word_tiles,
     bint is_reversed,
     current_axis,
@@ -68,6 +68,9 @@ def _gaddag_traverse(
     cdef int r_last, c_last, next_r, next_c, anchor_r, anchor_c, ref_r, ref_c, score
     cdef bint is_valid, is_bingo, just_crossed_separator
     cdef int letter_idx, blank_idx
+
+    # --- Function logic remains unchanged below this point ---
+    # --- The new 'gaddag_root_node' parameter is NOT used yet ---
 
     if depth > 20: return
     if not current_word_tiles: return
@@ -171,7 +174,9 @@ def _gaddag_traverse(
                 # Pass the existing memory view
                 _gaddag_traverse(
                     anchor_pos, current_rack_counts_c, tiles, board, blanks, cross_check_sets,
-                    next_node, current_word_tiles, False, current_axis,
+                    next_node,
+                    gaddag_root_node, # <<< Pass the root node through
+                    current_word_tiles, False, current_axis,
                     all_found_moves, unique_move_signatures, original_tiles_state,
                     is_first_play, full_rack_size, max_len, depth + 1
                 )
@@ -222,7 +227,9 @@ def _gaddag_traverse(
                 next_rack_np_arr = np.array(temp_rack_counts_c_arr, dtype=np.intc)
                 _gaddag_traverse(
                     anchor_pos, next_rack_np_arr, tiles, board, blanks, cross_check_sets,
-                    next_node, current_word_tiles + [(next_r, next_c, letter, False, True)],
+                    next_node,
+                    gaddag_root_node, # <<< Pass the root node through
+                    current_word_tiles + [(next_r, next_c, letter, False, True)],
                     is_reversed, current_axis, all_found_moves, unique_move_signatures,
                     original_tiles_state, is_first_play, full_rack_size, max_len, depth + 1
                 )
@@ -236,7 +243,9 @@ def _gaddag_traverse(
                 next_rack_np_arr = np.array(temp_rack_counts_c_arr, dtype=np.intc)
                 _gaddag_traverse(
                     anchor_pos, next_rack_np_arr, tiles, board, blanks, cross_check_sets,
-                    next_node, current_word_tiles + [(next_r, next_c, letter, True, True)],
+                    next_node,
+                    gaddag_root_node, # <<< Pass the root node through
+                    current_word_tiles + [(next_r, next_c, letter, True, True)],
                     is_reversed, current_axis, all_found_moves, unique_move_signatures,
                     original_tiles_state, is_first_play, full_rack_size, max_len, depth + 1
                 )
@@ -245,7 +254,9 @@ def _gaddag_traverse(
             # Pass the existing memory view
             _gaddag_traverse(
                 anchor_pos, current_rack_counts_c, tiles, board, blanks, cross_check_sets,
-                next_node, current_word_tiles + [(next_r, next_c, letter, False, False)],
+                next_node,
+                gaddag_root_node, # <<< Pass the root node through
+                current_word_tiles + [(next_r, next_c, letter, False, False)],
                 is_reversed, current_axis, all_found_moves, unique_move_signatures,
                 original_tiles_state, is_first_play, full_rack_size, max_len, depth + 1
             )
