@@ -1,4 +1,5 @@
-#Scrabble 26APR25 Cython V1
+
+#Scrabble 28APR25 Cython V3
 
 
 # gaddag_cython.pyx
