@@ -1,5 +1,5 @@
 
-#Scrabble 29APR25 Cython V4
+#Scrabble 29APR25 Cython V5
 
 
 
@@ -48,6 +48,54 @@ LETTERS = "ABCDEFGHIJKLMNO"  # For get_coord
 
 
 
+def perform_leave_lookup(leave_key_str):
+    """
+    Performs the lookup in the global LEAVE_LOOKUP_TABLE.
+    Called by the Cython function.
+    Uses LEAVE_LOOKUP_TABLE which must be defined later in this module.
+    """
+    # Access the global table (ensure it's loaded and accessible)
+    # LEAVE_LOOKUP_TABLE is global in this file
+    try:
+        # Use the globally loaded table from this module
+        # Add a check in case this is called before table is loaded (shouldn't happen now)
+        if not isinstance(LEAVE_LOOKUP_TABLE, dict):
+             print("Warning: perform_leave_lookup called before LEAVE_LOOKUP_TABLE is a dict.")
+             return 0.0
+
+        value = LEAVE_LOOKUP_TABLE.get(leave_key_str)
+        if value is not None:
+            return float(value)
+        else:
+            # print(f"--- DEBUG (Python Lookup): Key '{leave_key_str}' NOT FOUND.")
+            return 0.0
+    except NameError: # Catch if LEAVE_LOOKUP_TABLE doesn't exist yet
+        print("Warning: perform_leave_lookup called before LEAVE_LOOKUP_TABLE is defined.")
+        return 0.0
+    except Exception as e:
+        print(f"Error during Python leave lookup for key '{leave_key_str}': {e}")
+        return 0.0
+
+
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
+
+
+
+
+
+# Inside scrabble_helpers.py
+
 LEAVE_LOOKUP_TABLE = {}
 lookup_file = "NWL23-leaves.pkl" # <<< USE YOUR CORRECT FILENAME HERE
 try:
@@ -62,6 +110,17 @@ try:
             LEAVE_LOOKUP_TABLE = {}
         elif not LEAVE_LOOKUP_TABLE:
              print(f"--- WARNING: Loaded leave lookup table from {lookup_file} is empty. ---")
+        # <<< --- ADDED DEBUG PRINTS --- >>>
+        else:
+            print(f"--- DEBUG: LEAVE_LOOKUP_TABLE loaded. Type: {type(LEAVE_LOOKUP_TABLE)}, Size: {len(LEAVE_LOOKUP_TABLE)}")
+            # Print a few sample entries if the table is not too large or sensitive
+            sample_keys = ['ER', 'EN', 'EE', 'S', 'ES', '?'] # Example keys
+            for key in sample_keys:
+                if key in LEAVE_LOOKUP_TABLE:
+                    print(f"    Sample Key '{key}': Value = {LEAVE_LOOKUP_TABLE[key]} (Type: {type(LEAVE_LOOKUP_TABLE[key])})")
+                else:
+                    print(f"    Sample Key '{key}': NOT FOUND")
+        # <<< --- END ADDED DEBUG PRINTS --- >>>
 
     else:
         print(f"--- WARNING: Leave Lookup Table file not found: {lookup_file} ---")
@@ -268,7 +327,7 @@ def get_coord(start_pos, direction):
 
 
 
-
+'''
 def evaluate_leave(rack, verbose=False):
     """
     Retrieves the pre-calculated leave value (float) from the LEAVE_LOOKUP_TABLE.
@@ -313,6 +372,7 @@ def evaluate_leave(rack, verbose=False):
         # Catch potential errors during lookup (e.g., if table not loaded properly)
         print(f"Error during leave table lookup for key '{leave_key}': {e}. Returning 0.0.")
         return 0.0 # Return float
+'''
 
 
 
