@@ -1,4 +1,4 @@
-#Scrabble 29APR25 Cython V4
+#Scrabble 29APR25 Cython V5
 
 
 # gaddag_cython.pyx
@@ -15,12 +15,107 @@ from collections import Counter
 from scrabble_helpers import (
     CENTER_SQUARE, TILE_DISTRIBUTION,
     RED, PINK, BLUE, LIGHT_BLUE, LETTERS,
-    get_coord, evaluate_leave, get_anchor_points, Gaddag, GaddagNode, # Ensure GaddagNode is imported
+    get_coord, get_anchor_points, Gaddag, GaddagNode, # Ensure GaddagNode is imported
     DAWG as DAWG_cls # Import the CLASS definition for type checking if needed elsewhere
-)
+    )
+
+from scrabble_helpers import perform_leave_lookup
+
 
 # --- Define GRID_SIZE as a C constant ---
 DEF GRID_SIZE_C = 15
+
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
+
+
+
+# --- MODIFIED FUNCTION ---
+cpdef float evaluate_leave_cython(list rack, bint verbose=False): # Keep verbose argument
+    """
+    Generates the leave key and calls a Python helper function for the lookup.
+
+    Args:
+        rack (list): A list of characters representing the tiles left (blanks as ' ').
+        verbose (bool): If True, print lookup details (optional).
+
+    Returns:
+        float: The score adjustment from the lookup table, or 0.0.
+    """
+    # --- REMOVED: Force verbose for debugging ---
+    # verbose = True
+
+    cdef int num_tiles = len(rack)
+    cdef list rack_with_question_marks
+    cdef str leave_key, tile
+    cdef float leave_float = 0.0 # Initialize return value
+    # --- REMOVED: key_count variable ---
+    # cdef int key_count = 0
+
+    # --- REMOVED Type check (can be added back if needed) ---
+    # if not isinstance(leave_lookup_table_obj, dict): ...
+
+    # --- REMOVED Key Iteration Check ---
+    # if verbose: ...
+
+    # --- REMOVED Direct Key Check ---
+    # if verbose: ...
+
+    if num_tiles == 0:
+        # --- REMOVED Verbose Print ---
+        # if verbose: print("--- Evaluating Leave (Cython): Empty rack -> 0.0")
+        return 0.0 # Return float
+    if num_tiles > 6:
+        # --- REMOVED Verbose Print ---
+        # if verbose: print(f"--- Evaluating Leave (Cython): Rack length {num_tiles} > 6 -> 0.0")
+        return 0.0 # Return float
+
+    # Create the sorted key for lookup
+    rack_with_question_marks = ['?' if tile == ' ' else tile for tile in rack]
+    leave_key = "".join(sorted(rack_with_question_marks))
+
+    # --- REMOVED Verbose Print ---
+    # if verbose: print(f"--- Evaluating Leave (Cython): Input rack: {rack}, Generated key: '{leave_key}'")
+
+    try:
+        # Call Python helper function from scrabble_helpers
+        leave_float = perform_leave_lookup(leave_key) # Call imported function
+        # --- REMOVED Verbose Print ---
+        # if verbose: print(f"--- Evaluating Leave (Cython): Python lookup returned: {leave_float:.2f}")
+        return leave_float
+
+    except Exception as e:
+        # Catch potential errors during the callback or key generation
+        # Keep error print for actual errors
+        print(f"Error (Cython) generating key or calling Python lookup for rack '{rack}': {e}")
+        return 0.0 # Return float
+
+
+
+
+
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
 
 # Keep as cdef (internal helper)
 cdef int get_char_index(str letter):
@@ -33,7 +128,25 @@ cdef int get_char_index(str letter):
         return -1 # Indicate error
     return index
 
+
+
+
+
 # --- Helper functions for find_all_words_formed (Defined BEFORE find_all_words_formed) ---
+
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
+
 
 # --- find_cross_word ---
 cdef list find_cross_word(tuple tile, list tiles, str main_orientation):
@@ -68,6 +181,22 @@ cdef list find_cross_word(tuple tile, list tiles, str main_orientation):
                     cross_word.append((r, cc_cw, tiles[r][cc_cw]))
 
     return cross_word if len(cross_word) > 1 else []
+
+
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
+
+
 
 # --- find_main_word ---
 cdef tuple find_main_word(list new_tiles, list tiles):
@@ -127,6 +256,23 @@ cdef tuple find_main_word(list new_tiles, list tiles):
         return (main_word, orientation) if len(main_word) > 1 else ([], None)
     else: return [], None
 
+
+
+
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
+
+
 # --- find_all_words_formed ---
 # Use cpdef (called from Python) - Defined BEFORE is_valid_play
 cpdef list find_all_words_formed(list new_tiles, list tiles):
@@ -177,6 +323,23 @@ cpdef list find_all_words_formed(list new_tiles, list tiles):
 
     return unique_word_tile_lists
 
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
+
+
+
+
+
 # --- calculate_score ---
 # Use cpdef (called from Python) - Defined BEFORE is_valid_play
 cpdef int calculate_score(list new_tiles, list board, list tiles, set blanks):
@@ -216,11 +379,9 @@ cpdef int calculate_score(list new_tiles, list board, list tiles, set blanks):
 
 
 
-
-
-#^$^$^%$^%$^$!@#$!@#$!@#$%!@#$%!@#$%!@#$%^%$#@!@#$%$#@!#$%$#@#$%$#@!#$%$#@#$
-#^$^$^%$^%$^$!@#$!@#$!@#$%!@#$%!@#$%!@#$%^%$#@!@#$%$#@!#$%$#@#$%$#@!#$%$#@#$
-#^$^$^%$^%$^$!@#$!@#$!@#$%!@#$%!@#$%!@#$%^%$#@!@#$%$#@!#$%$#@#$%$#@!#$%$#@#$
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
 
 
 
@@ -621,6 +782,21 @@ def _gaddag_traverse(
                 original_tiles_state, is_first_play, full_rack_size, dawg_obj, max_len, depth + 1 # Pass dawg_obj
             )
             # --- END MODIFICATION ---
+
+
+
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
 
 
 # --- compute_cross_checks_cython ---
