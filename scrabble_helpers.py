@@ -1,5 +1,5 @@
 
-#Scrabble 28APR25 Cython V3
+#Scrabble 29APR25 Cython V4
 
 
 
@@ -8,7 +8,7 @@ import time
 import pickle
 import math # Add any other necessary imports
 from collections import Counter
-
+import os
 
 
 
@@ -39,6 +39,43 @@ LETTERS = "ABCDEFGHIJKLMNO"  # For get_coord
 
 
 
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
+
+LEAVE_LOOKUP_TABLE = {}
+lookup_file = "NWL23-leaves.pkl" # <<< USE YOUR CORRECT FILENAME HERE
+try:
+    # Ensure the path is correct if the file isn't in the same directory
+    if os.path.exists(lookup_file):
+        with open(lookup_file, 'rb') as f_lookup:
+            LEAVE_LOOKUP_TABLE = pickle.load(f_lookup)
+        print(f"--- SUCCESS: Loaded Leave Lookup Table from {lookup_file} ---")
+        # Optional: Check if it loaded as a dictionary
+        if not isinstance(LEAVE_LOOKUP_TABLE, dict):
+            print(f"--- WARNING: Loaded leave lookup table is not a dictionary (type: {type(LEAVE_LOOKUP_TABLE)})! Resetting. ---")
+            LEAVE_LOOKUP_TABLE = {}
+        elif not LEAVE_LOOKUP_TABLE:
+             print(f"--- WARNING: Loaded leave lookup table from {lookup_file} is empty. ---")
+
+    else:
+        print(f"--- WARNING: Leave Lookup Table file not found: {lookup_file} ---")
+        print("---          Leave evaluation will return 0.0 for unknown leaves. ---")
+        LEAVE_LOOKUP_TABLE = {} # Ensure it's an empty dict if file not found
+except (pickle.UnpicklingError, EOFError, AttributeError, ImportError, IndexError) as e:
+    print(f"--- ERROR: Failed to load or unpickle Leave Lookup Table from {lookup_file}: {e} ---")
+    print("---        Leave evaluation will return 0.0 for unknown leaves. ---")
+    LEAVE_LOOKUP_TABLE = {} # Ensure it's an empty dict on error
+except Exception as e: # Catch other potential errors during file access/loading
+    print(f"--- UNEXPECTED ERROR loading Leave Lookup Table from {lookup_file}: {e} ---")
+    LEAVE_LOOKUP_TABLE = {} # Ensure it's an empty dict on error
+
+
 
 
 
@@ -47,6 +84,9 @@ LETTERS = "ABCDEFGHIJKLMNO"  # For get_coord
 ##########################################################################################################
 ##########################################################################################################
 ##########################################################################################################
+
+
+
 
 
 
@@ -60,6 +100,20 @@ class GaddagNode:
     def __init__(self):
         self.children = {}  # Dictionary mapping letter -> GaddagNode
         self.is_terminal = False # True if a path ending here is a valid word/subword
+
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
+        
 
 # --- GADDAG Class Definition (Add this to Scrabble Game.py) ---
 class Gaddag:
@@ -75,6 +129,70 @@ class Gaddag:
         self.root = GaddagNode()
 
     # No insert method needed here, as we load a pre-built structure.
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
+class DAWG:
+    """
+    Represents the DAWG structure for efficient word lookups.
+    The actual graph is built separately and loaded from a pickle file.
+    This definition primarily supports unpickling and type checking.
+    """
+    def __init__(self):
+        """Initializes the DAWG, typically setting the root node."""
+        # The root will be overwritten when loading from pickle,
+        # but initializing it is good practice.
+        self.root = Node() # Or potentially an empty node object if you have one defined
+
+    def search(self, word):
+        """
+        Checks if a word exists in the DAWG by traversing from the root.
+        """
+        node = self.root
+        if node is None:
+            print("Error: DAWG root is None during search.")
+            return False
+
+        for char in word:
+            if char in node.children:
+                node = node.children[char]
+            else:
+                return False # Character path not found
+        return node.is_terminal
+
+    # Add other methods here ONLY if they are fundamental to the class
+    # structure itself and not just part of the loaded object's state/logic.
+    # For example, methods to build the DAWG would NOT go here if you
+    # build it separately.
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+
+class Node:
+    """Node for the DAWG structure."""
+    __slots__ = ['children', 'is_terminal'] # Memory optimization
+
+    def __init__(self):
+        self.children = {}  # char -> Node
+        self.is_terminal = False
+
 
 
 
@@ -112,4 +230,96 @@ def get_anchor_points(tiles, is_first_play):
 ##########################################################################################################
 ##########################################################################################################
 ##########################################################################################################
+
+
+
+
+
+
+def get_coord(start_pos, direction):
+    """Converts (row, col), direction into Scrabble notation (e.g., 8H, H8)."""
+    # Ensure start_pos is valid before unpacking
+    if not isinstance(start_pos, tuple) or len(start_pos) != 2:
+        print(f"Warning: Invalid start_pos '{start_pos}' passed to get_coord. Returning '??'.")
+        return "??"
+        
+    row, col = start_pos
+
+    # Validate row and col indices
+    if not (0 <= row < GRID_SIZE and 0 <= col < len(LETTERS)):
+         print(f"Warning: Invalid coordinates ({row},{col}) passed to get_coord. Returning '??'.")
+         return "??"
+
+    if direction == "right":
+        # Horizontal: Row number (1-based) then Column Letter
+        return f"{row + 1}{LETTERS[col]}"
+    elif direction == "down":
+        # Vertical: Column Letter then Row number (1-based)
+        return f"{LETTERS[col]}{row + 1}"
+    else:
+        # Handle unexpected direction values
+        print(f"Warning: Invalid direction '{direction}' passed to get_coord. Returning '??'.")
+        return "??"
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
+
+
+def evaluate_leave(rack, verbose=False):
+    """
+    Retrieves the pre-calculated leave value (float) from the LEAVE_LOOKUP_TABLE.
+    Handles leaves of length 1-6. Returns 0.0 for empty leaves or leaves > 6 tiles.
+    Converts blanks (' ') to '?' before sorting for lookup key generation.
+
+    Args:
+        rack (list): A list of characters representing the tiles left (blanks as ' ').
+        verbose (bool): If True, print lookup details (optional).
+
+    Returns:
+        float: The score adjustment from the lookup table, or 0.0.
+    """
+    num_tiles = len(rack)
+
+    if num_tiles == 0:
+        if verbose: print("--- Evaluating Leave: Empty rack -> 0.0")
+        return 0.0 # Return float
+    if num_tiles > 6:
+        if verbose: print(f"--- Evaluating Leave: Rack length {num_tiles} > 6 -> 0.0")
+        return 0.0 # Return float
+
+    # Create the sorted key for lookup
+    rack_with_question_marks = ['?' if tile == ' ' else tile for tile in rack]
+    leave_key = "".join(sorted(rack_with_question_marks))
+
+    try:
+        # Lookup the value in the global table using the key with '?'
+        value = LEAVE_LOOKUP_TABLE.get(leave_key)
+
+        if value is not None:
+            # Return float directly ---
+            leave_float = float(value) # Ensure it's treated as float
+            if verbose: print(f"--- Evaluating Leave: Found '{leave_key}' -> {leave_float:.2f}") # Print with precision
+            return leave_float
+            
+        else:
+            # Key not found - this shouldn't happen if the table is complete for 1-6
+            print(f"Warning: Leave key '{leave_key}' not found in LEAVE_LOOKUP_TABLE. Returning 0.0.")
+            return 0.0 # Return float
+    except Exception as e:
+        # Catch potential errors during lookup (e.g., if table not loaded properly)
+        print(f"Error during leave table lookup for key '{leave_key}': {e}. Returning 0.0.")
+        return 0.0 # Return float
+
+
+
+
+##########################################################################################################
+##########################################################################################################
+##########################################################################################################
+
+
 
