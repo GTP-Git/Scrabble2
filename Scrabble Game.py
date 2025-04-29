@@ -1,6 +1,6 @@
 
 #python
-#Scrabble 29APR25 Cython V4
+#Scrabble 29APR25 Cython V5
 
 
 # Part 1
@@ -27,14 +27,15 @@ import io
 
 
 
+# --- scrabble_helpers import ---
 from scrabble_helpers import (
-    get_coord, evaluate_leave, get_anchor_points,
-    Gaddag, GaddagNode, DAWG as DAWG_cls, # Import the DAWG *class* as DAWG_cls
+    get_coord, # REMOVED evaluate_leave,
+    get_anchor_points,
+    Gaddag, GaddagNode, DAWG as DAWG_cls,
     GRID_SIZE, CENTER_SQUARE, TILE_DISTRIBUTION,
-    RED, PINK, BLUE, LIGHT_BLUE, LETTERS
+    RED, PINK, BLUE, LIGHT_BLUE, LETTERS,
+    LEAVE_LOOKUP_TABLE # <<< Ensure LEAVE_LOOKUP_TABLE is imported/available globally
 )
-
-
 
 
 print("Loading DAWG dictionary...")
@@ -65,54 +66,38 @@ if DAWG is None:
      # sys.exit("Exiting due to DAWG load failure.")
 
 
+# --- Consolidated Cython Import Block ---
 try:
     from gaddag_cython import _gaddag_traverse as _gaddag_traverse_cython
     from gaddag_cython import calculate_score as calculate_score_cython
     from gaddag_cython import is_valid_play as is_valid_play_cython
     from gaddag_cython import find_all_words_formed as find_all_words_formed_cython
-    print("--- SUCCESS: Imported Cython functions. ---")
+    from gaddag_cython import compute_cross_checks_cython
+    from gaddag_cython import evaluate_leave_cython # <<< ADDED IMPORT
+    print("--- SUCCESS: Imported ALL Cython functions. ---")
     USE_CYTHON_GADDAG = True
-    # --- Add explicit check ---
+    USE_CYTHON_CROSS_CHECKS = True
+    USE_CYTHON_EVALUATE_LEAVE = True # Add flag
+
+    # --- Add explicit check for all imported functions ---
     print(f"    _gaddag_traverse_cython: {repr(_gaddag_traverse_cython)}")
     print(f"    calculate_score_cython: {repr(calculate_score_cython)}")
     print(f"    is_valid_play_cython: {repr(is_valid_play_cython)}")
     print(f"    find_all_words_formed_cython: {repr(find_all_words_formed_cython)}")
+    print(f"    compute_cross_checks_cython: {repr(compute_cross_checks_cython)}")
+    print(f"    evaluate_leave_cython: {repr(evaluate_leave_cython)}")
     # --- End explicit check ---
 
 except ImportError as e:
     print(f"--- FAILURE: Cython import failed: {e} ---")
-    print("!!! CRITICAL ERROR: Cannot proceed without core Cython functions or fallbacks. !!!")
-    # Define dummy functions to prevent immediate crash, but indicate failure
+    print("!!! CRITICAL ERROR: Falling back to dummy Python functions. Performance will be impacted. !!!")
+
+    # Define dummy functions for ALL Cython imports
     def _gaddag_traverse_dummy(*args, **kwargs): print("DUMMY _gaddag_traverse called"); return None
     def calculate_score_dummy(*args, **kwargs): print("DUMMY calculate_score called"); return 0
     def is_valid_play_dummy(*args, **kwargs): print("DUMMY is_valid_play called"); return False, False
     def find_all_words_formed_dummy(*args, **kwargs): print("DUMMY find_all_words_formed called"); return []
-    _gaddag_traverse_cython = _gaddag_traverse_dummy
-    calculate_score_cython = calculate_score_dummy
-    is_valid_play_cython = is_valid_play_dummy
-    find_all_words_formed_cython = find_all_words_formed_dummy
-    USE_CYTHON_GADDAG = False
-    # Optionally, exit here if fallbacks are unacceptable
-    # sys.exit("Cython module failed to load.")
-# --- END CYTHON IMPORT ---
-
-print(f"DEBUG: is_valid_play_cython is assigned to: {is_valid_play_cython}")
-
-
-
-
-
-
-try:
-    # Import the new cross-check function
-    from gaddag_cython import compute_cross_checks_cython
-    print("--- SUCCESS: Imported Cython compute_cross_checks_cython. ---")
-    USE_CYTHON_CROSS_CHECKS = True
-except ImportError as e:
-    print(f"--- WARNING: Cython import failed for compute_cross_checks_cython: {e} ---")
-    print("--- Falling back to Python cross-check calculation. ---")
-    # Define a dummy function if Cython version fails
-    def compute_cross_checks_cython(tiles, dawg_obj):
+    def compute_cross_checks_dummy(tiles, dawg_obj):
          print("!!! Using dummy Python compute_cross_checks !!!")
          # Paste the original Python cross-check logic here as a fallback
          cross_check_sets = {}
@@ -146,7 +131,32 @@ except ImportError as e:
                          if allowed_letters_h: allowed_letters_h.add(' ')
                      cross_check_sets[(r, c)] = {'V': allowed_letters_v, 'H': allowed_letters_h}
          return cross_check_sets
+    def evaluate_leave_dummy(table, rack, verbose=False):
+        print("!!! Using dummy evaluate_leave - returning 0.0 !!!")
+        return 0.0
+
+    # Assign ALL dummies to the original names
+    _gaddag_traverse_cython = _gaddag_traverse_dummy
+    calculate_score_cython = calculate_score_dummy
+    is_valid_play_cython = is_valid_play_dummy
+    find_all_words_formed_cython = find_all_words_formed_dummy
+    compute_cross_checks_cython = compute_cross_checks_dummy
+    evaluate_leave_cython = evaluate_leave_dummy
+
+    # Set ALL flags to False
+    USE_CYTHON_GADDAG = False
     USE_CYTHON_CROSS_CHECKS = False
+    USE_CYTHON_EVALUATE_LEAVE = False
+
+    # Optionally, exit here if fallbacks are unacceptable
+    # sys.exit("Essential Cython modules failed to load.")
+# --- End Consolidated Cython Import Block ---
+
+
+print(f"DEBUG: is_valid_play_cython is assigned to: {is_valid_play_cython}")
+
+
+# --- pyperclip import block starts below ---
 
 
 
@@ -1778,9 +1788,10 @@ def calculate_avg_leave(move_history):
         # Only count moves where a rack was recorded (should be all moves)
         if 'rack' in move and move['rack'] is not None:
             moves_count[player] += 1
+            
             # Evaluate the leave *before* the move was made
             # The 'rack' field in move_history stores the rack *before* the move
-            leave_score = evaluate_leave(move['rack'])
+            leave_score = evaluate_leave_cython(move['rack'])
             leave_scores_sum[player] += leave_score
 
     avg_p1 = leave_scores_sum[1] / moves_count[1] if moves_count[1] > 0 else 0.0
@@ -2681,7 +2692,8 @@ def generate_all_moves_gaddag(rack, tiles, board, blanks, gaddag_root):
 
 
 
-# Scrabble Game.py
+# Function to Replace: draw_hint_dialog
+# REASON: Use evaluate_leave_cython instead of evaluate_leave.
 
 def draw_hint_dialog(moves, selected_index, is_simulation_result=False, best_exchange_tiles=None, best_exchange_score=None):
     """
@@ -2692,7 +2704,15 @@ def draw_hint_dialog(moves, selected_index, is_simulation_result=False, best_exc
     """
     # Determine number of play moves to show initially
     max_moves_to_show = 5
-    num_play_moves = len(moves)
+    num_play_moves = 0
+    # Ensure moves is iterable and count valid play moves
+    if isinstance(moves, list):
+        for move_item in moves:
+             # Check if it's a simulation result dict or a direct move dict
+             if (isinstance(move_item, dict) and 'move' in move_item and isinstance(move_item['move'], dict)) or \
+                (isinstance(move_item, dict) and 'word' in move_item): # Assuming direct move dicts have 'word'
+                 num_play_moves += 1
+
     num_play_moves_shown = min(num_play_moves, max_moves_to_show)
 
     # Check if a valid exchange option should be added
@@ -2706,6 +2726,8 @@ def draw_hint_dialog(moves, selected_index, is_simulation_result=False, best_exc
     button_height = BUTTON_HEIGHT # From global constants usually
     padding = 10
     required_content_height = total_items * line_height
+    # Ensure minimum height if no items
+    required_content_height = max(required_content_height, line_height) # At least space for one line/message
     dialog_height = header_height + required_content_height + button_height + padding * 3 # Top/bottom padding + space above buttons
     dialog_width = 400 # Keep width fixed
 
@@ -2724,58 +2746,83 @@ def draw_hint_dialog(moves, selected_index, is_simulation_result=False, best_exc
     y_pos = dialog_y + header_height + padding # Start below header
 
     # --- Draw Play Moves ---
-    for i, move_data in enumerate(moves[:num_play_moves_shown]):
-        # Extract move dict ---
-        if is_simulation_result and isinstance(move_data, dict):
-            move = move_data.get('move', {}) # Get the inner move dict
-            final_score = move_data.get('final_score', 0.0)
-        else:
-            move = move_data # Assume it's already the move dict
-            final_score = 0.0 # Not used for standard hints
+    play_moves_drawn_count = 0
+    if isinstance(moves, list): # Check if moves is a list before iterating
+        for i, move_data in enumerate(moves):
+            if play_moves_drawn_count >= num_play_moves_shown:
+                break # Stop drawing play moves if we've reached the limit
 
-        is_selected = (i == selected_index)
-        color = HINT_SELECTED_COLOR if is_selected else HINT_NORMAL_COLOR
-        rect = pygame.Rect(dialog_x + padding, y_pos, dialog_width - 2 * padding, line_height)
-        pygame.draw.rect(screen, color, rect)
+            # Extract move dict ---
+            move = None
+            final_score = 0.0
+            if is_simulation_result and isinstance(move_data, dict):
+                move = move_data.get('move', {}) # Get the inner move dict
+                final_score = move_data.get('final_score', 0.0)
+            elif isinstance(move_data, dict): # Handle direct move dict
+                move = move_data # Assume it's already the move dict
+                final_score = 0.0 # Not used for standard hints
+            else:
+                continue # Skip if move_data is not in expected format
 
-        word = move.get('word', 'N/A')
-        score = move.get('score', 0)
-        start_pos = move.get('start', (0,0))
-        direction = move.get('direction', 'right')
-        leave = move.get('leave', [])
-        word_display = move.get('word_with_blanks', word.upper()) # Use formatted word
-        coord = get_coord(start_pos, direction)
-        leave_str = ''.join(sorted(l if l != ' ' else '?' for l in leave))
-        avg_opp_score = move.get('avg_opp_score', 0.0) # Get from augmented dict if sim
-        leave_val = evaluate_leave(leave) # Recalculate leave value
+            # Ensure extracted move is a dict before proceeding
+            if not isinstance(move, dict):
+                continue
 
-        # --- MODIFIED TEXT FORMAT ---
-        if is_simulation_result:
-            # Format: Raw + Leave - Opponent = Final
-            text_str = f"{i+1}. {word_display} ({score}{leave_val:+0.1f}-{avg_opp_score:.1f}={final_score:.1f}) L:{leave_str}"
-        else:
-            # Original format
-            text_str = f"{i+1}. {word_display} ({score} pts) at {coord} ({leave_str})"
+            is_selected = (play_moves_drawn_count == selected_index) # Compare with drawn count
+            color = HINT_SELECTED_COLOR if is_selected else HINT_NORMAL_COLOR
+            rect = pygame.Rect(dialog_x + padding, y_pos, dialog_width - 2 * padding, line_height)
+            pygame.draw.rect(screen, color, rect)
 
-        text = ui_font.render(text_str, True, BLACK)
+            word = move.get('word', 'N/A')
+            score = move.get('score', 0)
+            start_pos = move.get('start', (0,0))
+            direction = move.get('direction', 'right')
+            leave = move.get('leave', [])
+            word_display = move.get('word_with_blanks', word.upper()) # Use formatted word
+            coord = get_coord(start_pos, direction)
+            leave_str = ''.join(sorted(l if l != ' ' else '?' for l in leave))
+            avg_opp_score = move.get('avg_opp_score', 0.0) # Get from augmented dict if sim
 
-        # Truncate text if too wide
-        max_text_width = rect.width - 10
-        if text.get_width() > max_text_width:
-             avg_char_width = text.get_width() / len(text_str) if len(text_str) > 0 else 10
-             if avg_char_width > 0:
-                 max_chars = int(max_text_width / avg_char_width) - 3
-                 if max_chars < 5: max_chars = 5
-                 text_str = text_str[:max_chars] + "..."
-                 text = ui_font.render(text_str, True, BLACK)
+            # --- MODIFIED: Use evaluate_leave_cython ---
+            try:
+                # Ensure evaluate_leave_cython is imported or globally available
+                leave_val = evaluate_leave_cython(leave) # Recalculate leave value using Cython
+            except NameError:
+                print("ERROR: evaluate_leave_cython not found in draw_hint_dialog!")
+                leave_val = 0.0
+            except Exception as e_eval:
+                print(f"ERROR calling evaluate_leave_cython in draw_hint_dialog: {e_eval}")
+                leave_val = 0.0
+            # --- END MODIFICATION ---
 
-        screen.blit(text, (dialog_x + padding + 5, y_pos + 5))
-        hint_rects.append(rect)
-        y_pos += line_height
+            # --- MODIFIED TEXT FORMAT ---
+            if is_simulation_result:
+                # Format: Raw + Leave - Opponent = Final
+                text_str = f"{play_moves_drawn_count+1}. {word_display} ({score}{leave_val:+0.1f}-{avg_opp_score:.1f}={final_score:.1f}) L:{leave_str}"
+            else:
+                # Original format
+                text_str = f"{play_moves_drawn_count+1}. {word_display} ({score} pts) at {coord} ({leave_str})"
+
+            text = ui_font.render(text_str, True, BLACK)
+
+            # Truncate text if too wide
+            max_text_width = rect.width - 10
+            if text.get_width() > max_text_width:
+                 avg_char_width = text.get_width() / len(text_str) if len(text_str) > 0 else 10
+                 if avg_char_width > 0:
+                     max_chars = int(max_text_width / avg_char_width) - 3
+                     if max_chars < 5: max_chars = 5
+                     text_str = text_str[:max_chars] + "..."
+                     text = ui_font.render(text_str, True, BLACK)
+
+            screen.blit(text, (dialog_x + padding + 5, y_pos + 5))
+            hint_rects.append(rect)
+            y_pos += line_height
+            play_moves_drawn_count += 1 # Increment counter for plays drawn
 
     # --- Draw Exchange Option (Appended to List) ---
     if add_exchange_option:
-        exchange_index = num_play_moves_shown # Index will be after the last play move shown
+        exchange_index = play_moves_drawn_count # Index will be after the last play move shown
         is_selected = (exchange_index == selected_index)
         color = HINT_SELECTED_COLOR if is_selected else GRAY # Use Gray background
         rect = pygame.Rect(dialog_x + padding, y_pos, dialog_width - 2 * padding, line_height)
@@ -2830,6 +2877,10 @@ def draw_hint_dialog(moves, selected_index, is_simulation_result=False, best_exc
 
     # --- MODIFIED RETURN: Remove exchange_hint_rect ---
     return hint_rects, play_button_rect, ok_button_rect, all_words_button_rect
+
+
+
+
 
 
 
@@ -3763,37 +3814,16 @@ def create_vertical_histogram(quartile_counts, total_ranked, title, max_height=1
 
 
 
+# Function to Restore and Modify: evaluate_single_move
 
-# --- AI Logic ---
-
-# --- AI Strategy Helper Functions ---
-
-# --- Static Leave Values & Constants (Assumed to be defined elsewhere in the full code) ---
-#GOOD_LEAVE_BONUS = {' ': 25.6, 'S': 8.0, 'Z': 5.1, 'X': 3.3, 'E': 0.3, 'A': 0.6, 'R': 1.1, 'N': 0.2,'H': 1.1, 'C': 0.9, 'M': 0.6, 'D': 0.5}
-#BAD_LEAVE_PENALTY = {'T': -0.1, 'I': -2.1, 'L': -0.2, 'Q': -6.8, 'J': -1.5, 'V': -5.5, 'W': -3.8, 'K': -0.5, 'F': -2.2, 'Y': -0.6, 'U': -5.1, 'B': -2.0, 'G': -2.9, 'P': -0.5, 'O': -2.5}
-#DUPLICATE_PENALTY = -4.2 # Applied for each duplicate beyond the first
-#VOWELS = "AEIOU"
-#BALANCE_PENALTY_FACTOR = -4.0 # Penalty per vowel count away from ideal range
-# --- END Constants ---
-
-
-
-
-# Assume LEAVE_LOOKUP_TABLE is loaded globally earlier in the script
-# LEAVE_LOOKUP_TABLE = {} # Example initialization
-
-
-
-
-
-
-def evaluate_single_move(move_dict, leave_evaluation_func):
+def evaluate_single_move(move_dict, leave_lookup_table): # Changed second arg
     """
     Combines the immediate score of a move with the evaluated score of its leave.
+    Calls the Cython version of evaluate_leave.
 
     Args:
         move_dict (dict): The dictionary representing the move (must contain 'score' and 'leave').
-        leave_evaluation_func (function): The function to use for evaluating the leave (e.g., evaluate_leave).
+        leave_lookup_table (dict): The pre-loaded LEAVE_LOOKUP_TABLE.
 
     Returns:
         float: The combined evaluation score for the move.
@@ -3801,14 +3831,29 @@ def evaluate_single_move(move_dict, leave_evaluation_func):
     """
     immediate_score = move_dict.get('score', 0)
     leave = move_dict.get('leave', [])
-    leave_score_adjustment = leave_evaluation_func(leave)
+
+    # --- MODIFIED: Directly call Cython version ---
+    # Ensure evaluate_leave_cython is imported and available
+    try:
+        leave_score_adjustment = evaluate_leave_cython(leave)
+    except NameError:
+         print("ERROR: evaluate_leave_cython not found in evaluate_single_move!")
+         leave_score_adjustment = 0.0
+    except Exception as e:
+         print(f"ERROR calling evaluate_leave_cython: {e}")
+         leave_score_adjustment = 0.0
+    # --- END MODIFICATION ---
+
 
     # Simple combination for now: add leave adjustment to immediate score
-    # Future difficulty levels could apply weights here:
-    # e.g., weight_score * immediate_score + weight_leave * leave_score_adjustment
     combined_score = float(immediate_score + leave_score_adjustment)
 
     return combined_score
+
+
+
+
+
 
 
 def analyze_unseen_pool(remaining_tiles_dict):
@@ -3838,7 +3883,7 @@ def analyze_unseen_pool(remaining_tiles_dict):
             # Assumes evaluate_leave([tile]) returns the desired static value
             try:
                 # Pass tile as a single-element list
-                single_tile_value = evaluate_leave([tile])
+                single_tile_value = evaluate_leave_cython([tile])
             except Exception as e:
                 # Handle cases where evaluate_leave might fail for a single tile
                 # or if the tile isn't expected (e.g., not A-Z or ' ')
@@ -3922,7 +3967,9 @@ def find_best_exchange_option(rack, remaining_tiles_dict, bag_count):
                 # Iterate through all combinations of tiles to KEEP
                 for kept_subset_tuple in itertools.combinations(rack, num_to_keep):
                     kept_subset_list = list(kept_subset_tuple)
-                    current_leave_score = evaluate_leave(kept_subset_list) # Evaluate the potential leave
+
+                    current_leave_score = evaluate_leave_cython(kept_subset_list)
+                    
 
                     if current_leave_score > best_leave_score_for_k:
                         best_leave_score_for_k = current_leave_score
@@ -4605,7 +4652,7 @@ def run_ai_simulation(ai_rack, opponent_rack_len, tiles, blanks, board, bag, gad
         ai_raw_score = ai_move.get('score', 0)
         leave = ai_move.get('leave', [])
         # --- Use the new evaluate_leave (lookup, returns float) ---
-        leave_value = evaluate_leave(leave) # Returns float
+        leave_value = evaluate_leave_cython(leave)
         # Update console output format ---
         leave_str_eval = "".join(sorted(['?' if tile == ' ' else tile for tile in leave])) # Use '?' for display
         word_eval = ai_move.get('word_with_blanks', ai_move.get('word', '?'))
@@ -4630,7 +4677,7 @@ def run_ai_simulation(ai_rack, opponent_rack_len, tiles, blanks, board, bag, gad
         leave_str = "".join(sorted(l if l != ' ' else '?' for l in leave_list))
         avg_opp = move.get('avg_opp_score', 0.0) # Get stored score
         # Get leave value again for printing (it was calculated above)
-        leave_val = evaluate_leave(leave_list) # Returns float
+        leave_val = evaluate_leave_cython(leave_list)
         # Update print format ---
         print(f"  {i+1}. {word} at {coord} ({raw_score}) L:'{leave_str}' ({leave_val:.2f}) OppAvg:{avg_opp:.1f} -> Final:{final_score:.1f}") # Format leave_val and final_score
 
@@ -4750,6 +4797,38 @@ def get_replay_state(turn_idx, initial_racks):
 
     # Return the state *after* turn_idx moves have been applied
     return tiles_state, blanks_state, scores_state, racks_state
+
+
+
+
+
+
+
+def perform_leave_lookup(leave_key_str):
+    """
+    Performs the lookup in the global LEAVE_LOOKUP_TABLE.
+    Called by the Cython function.
+    """
+    # Access the global table (ensure it's loaded and accessible)
+    global LEAVE_LOOKUP_TABLE
+    try:
+        value = LEAVE_LOOKUP_TABLE.get(leave_key_str)
+        if value is not None:
+            return float(value)
+        else:
+            # Optional: Add a print here if you want to see keys failing lookup *in Python*
+            # print(f"--- DEBUG (Python Lookup): Key '{leave_key_str}' NOT FOUND.")
+            return 0.0
+    except Exception as e:
+        print(f"Error during Python leave lookup for key '{leave_key_str}': {e}")
+        return 0.0
+
+
+
+
+
+
+
 
 
 
@@ -4929,7 +5008,7 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
         # --- END DEBUG ---
         temp_evaluated_plays = [] # Store standard evals for detailed print
         for move in all_moves:
-            evaluated_score = evaluate_single_move(move, evaluate_leave) # Uses leave eval
+            evaluated_score = evaluate_single_move(move, LEAVE_LOOKUP_TABLE)
             temp_evaluated_plays.append({'move': move, 'final_score': evaluated_score}) # Store std eval
             if evaluated_score > best_play_evaluation:
                 best_play_evaluation = evaluated_score
@@ -4956,7 +5035,7 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
             raw_score = move.get('score', 0)
             leave = move.get('leave', [])
             leave_str = "".join(sorted(l if l != ' ' else '?' for l in leave))
-            leave_eval = evaluate_leave(leave)
+            leave_eval = evaluate_leave_cython(leave)
             opp_avg_str = f"{move.get('avg_opp_score', 0.0):>6.1f}" if run_simulation else "   N/A" # Get from move if sim run
 
             print(f" {i+1:>2} | {word} ({raw_score}) | {leave_str} ({leave_eval:.1f}) | {opp_avg_str} | {final_score:>7.2f}")
@@ -5073,7 +5152,7 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
 
     # Calculate luck factor based on drawn tiles (if any)
     if drawn_tiles:
-        drawn_leave_value = evaluate_leave(drawn_tiles)
+        drawn_leave_value = evaluate_leave_cython(drawn_tiles)
         # Calculate expected value based on the pool *before* the draw
         remaining_before_draw = get_remaining_tiles(move_rack_before, board_tile_counts) # Use rack before draw
         pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
@@ -5936,6 +6015,9 @@ def draw_game_screen(screen, state):
 
 
 
+# Function to Replace: process_game_events
+# REASON: Add debug prints before is_valid_play_cython call for typed plays.
+
 def process_game_events(state, drawn_rects): # Added drawn_rects parameter
     """
     Handles the main event loop, processing user input and system events.
@@ -6223,17 +6305,19 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                             print(f"  First Play? {state['first_play']}")
                             print(f"  Initial Rack Size: {initial_rack_size_for_play}")
                             print(f"  Original Rack: {state['original_rack']}")
+                            # --- ADDED: Print current tiles and original tiles for comparison ---
+                            print(f"  Current Tiles (at validation):")
+                            # Print a small relevant section or just confirm type/size
+                            # for row_idx, row_val in enumerate(state['tiles']): print(f"    {row_idx}: {''.join(c if c else '.' for c in row_val)}")
+                            print(f"  Original Tiles (before typing):")
+                            # for row_idx, row_val in enumerate(state['original_tiles']): print(f"    {row_idx}: {''.join(c if c else '.' for c in row_val)}")
+                            # --- END ADDED ---
                             print("  Calling is_valid_play_cython...")
-
-
 
                             if 'DAWG' in globals() and DAWG is not None:
                                 print(f"DEBUG process_game_events: Passing DAWG object with id={id(DAWG)}, type={type(DAWG)}")
                             else:
                                 print("DEBUG process_game_events: Global DAWG is None or not found!")
-
-
-                            
                             # --- END DEBUG PRINTS ---
 
                             # --- CORRECTED CALL: Add DAWG argument ---
@@ -6247,13 +6331,29 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                      blanks_to_remove = set((r_wp, c_wp) for r_wp, c_wp, _ in newly_placed_details if (r_wp, c_wp) in state['blanks']); state['blanks'].difference_update(blanks_to_remove)
                                  state['original_tiles'] = None; state['original_rack'] = None; state['selected_square'] = None; current_r = None; current_c = None; state['current_r'] = None; state['current_c'] = None; state['typing_direction'] = None; state['typing_start'] = None
                                  continue # Skip rest of this event processing
+
+                            # --- Ensure original_tiles is passed correctly ---
+                            original_tiles_for_validation = state.get('original_tiles')
+                            if original_tiles_for_validation is None:
+                                print("CRITICAL ERROR: original_tiles is None during validation!")
+                                # Handle error: revert typing, show message, etc.
+                                # Revert logic (similar to above)
+                                state['typing'] = False; state['word_positions'] = [];
+                                if state['original_rack']: # Check if rack backup exists
+                                    state['racks'][state['turn']-1] = state['original_rack'][:]
+                                    if not state['is_ai'][state['turn']-1]: state['racks'][state['turn']-1].sort()
+                                # Cannot revert tiles without original_tiles backup
+                                state['original_tiles'] = None; state['original_rack'] = None; state['selected_square'] = None; current_r = None; current_c = None; state['current_r'] = None; state['current_c'] = None; state['typing_direction'] = None; state['typing_start'] = None
+                                show_message_dialog("Internal error during validation (missing original state).", "Error")
+                                continue # Skip rest of processing
+
                             is_valid, is_bingo = is_valid_play_cython(
                                 newly_placed_details,
-                                state['tiles'],
+                                state['tiles'], # Current board state with typed tiles
                                 state['first_play'],
                                 initial_rack_size_for_play,
-                                state['original_tiles'],
-                                state['original_rack'],
+                                original_tiles_for_validation, # Pass the backed-up state
+                                state['original_rack'], # Pass original rack (though not used by current is_valid_play)
                                 DAWG # Pass the globally loaded DAWG object
                             )
                             # --- END CORRECTION ---
@@ -6349,9 +6449,9 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                     if not state['is_ai'][state['turn']-1]: state['racks'][state['turn']-1].sort()
                                     luck_factor = 0.0;
                                     if drawn_tiles:
-                                        drawn_leave_value = evaluate_leave(drawn_tiles)
+                                        drawn_leave_value = evaluate_leave_cython(drawn_tiles) # Use Cython
                                         remaining_before_draw = get_remaining_tiles(state['original_rack'], board_tile_counts) # Use original rack
-                                        pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
+                                        pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw) # Uses Cython
                                         expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
                                         expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
                                         luck_factor = drawn_leave_value - expected_draw_value_total
@@ -6460,6 +6560,9 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
 
 
 
+
+# Function to Replace: handle_mouse_down_event
+# REASON: Use evaluate_leave_cython in hint dialog exchange finalization.
 
 def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects parameter
         """
@@ -6882,7 +6985,9 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                     if not is_ai[turn-1]: racks[turn-1].sort(); bag.extend(tiles_to_exchange); random.shuffle(bag)
                                     luck_factor = 0.0
                                     if drawn_tiles:
-                                        drawn_leave_value = evaluate_leave(drawn_tiles)
+                                        # --- MODIFIED CALL ---
+                                        drawn_leave_value = evaluate_leave_cython(drawn_tiles)
+                                        # --- END MODIFICATION ---
                                         # Calculate expected value based on the pool *before* the draw
                                         remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts) # Use rack before draw
                                         pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
@@ -6905,8 +7010,8 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                         num_plays_shown = 0
                         if isinstance(hint_moves, list):
                             for item in hint_moves[:max_moves_to_show]:
-                                if (isinstance(item, dict) and 'move' in item) or \
-                                   (isinstance(item, dict) and 'word' in item):
+                                if (isinstance(item, dict) and 'move' in item and isinstance(item['move'], dict)) or \
+                                   (isinstance(item, dict) and 'word' in item): # Assuming direct move dicts have 'word'
                                     num_plays_shown += 1
                         exchange_option_present = bool(best_exchange_for_hint)
                         exchange_display_index = num_plays_shown if exchange_option_present else -1
@@ -6945,7 +7050,9 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                     bag.extend(tiles_to_exchange); random.shuffle(bag)
                                     luck_factor = 0.0
                                     if drawn_tiles:
-                                        drawn_leave_value = evaluate_leave(drawn_tiles)
+                                        # --- MODIFIED CALL ---
+                                        drawn_leave_value = evaluate_leave_cython(drawn_tiles)
+                                        # --- END MODIFICATION ---
                                         remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts)
                                         pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
                                         expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
@@ -6993,7 +7100,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                             next_turn, drawn_tiles, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
                                             human_played = True; hinting = False; paused_for_power_tile = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; luck_factor = 0.0;
                                             if drawn_tiles:
-                                                drawn_leave_value = evaluate_leave(drawn_tiles)
+                                                drawn_leave_value = evaluate_leave_cython(drawn_tiles)
                                                 remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts)
                                                 pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
                                                 expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
@@ -7016,7 +7123,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                             next_turn, drawn_tiles, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
                                             human_played = True; hinting = False; paused_for_bingo_practice = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; luck_factor = 0.0;
                                             if drawn_tiles:
-                                                drawn_leave_value = evaluate_leave(drawn_tiles)
+                                                drawn_leave_value = evaluate_leave_cython(drawn_tiles)
                                                 remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts)
                                                 pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
                                                 expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
@@ -7039,7 +7146,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                         human_played = True; hinting = False; paused_for_power_tile = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0
                                         luck_factor = 0.0;
                                         if drawn_tiles:
-                                            drawn_leave_value = evaluate_leave(drawn_tiles)
+                                            drawn_leave_value = evaluate_leave_cython(drawn_tiles)
                                             remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts)
                                             pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
                                             expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
@@ -7118,7 +7225,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                         next_turn, drawn_tiles, newly_placed, board_tile_counts = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts);
                                         human_played = True; showing_all_words = False; paused_for_bingo_practice = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; luck_factor = 0.0;
                                         if drawn_tiles:
-                                            drawn_leave_value = evaluate_leave(drawn_tiles)
+                                            drawn_leave_value = evaluate_leave_cython(drawn_tiles)
                                             remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts)
                                             pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
                                             expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
@@ -7140,7 +7247,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                     human_played = True; showing_all_words = False; paused_for_power_tile = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0
                                     luck_factor = 0.0;
                                     if drawn_tiles:
-                                        drawn_leave_value = evaluate_leave(drawn_tiles)
+                                        drawn_leave_value = evaluate_leave_cython(drawn_tiles)
                                         remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts)
                                         pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
                                         expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
