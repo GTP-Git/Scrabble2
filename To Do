@@ -14,6 +14,8 @@ To-Do List
 
 -- In Replay Mode, limit the Option menu to Main (anything else?) and relocate it in this mode so that it's functional.
 
+-- The AI sometimes plays vertically to start the game. Where is this in the code. 50/50 V/H would be nice.
+
 -- In Only Fives mode, show another button in the Suggest dialog that says "Only Fives" which only shows 5-letter words.
 
 -- On the Batch text file, show the absolute number of bingos in each quartile, and list what the quartiles represent, like 1-12000 for Q1, etc.
