@@ -7,19 +7,17 @@ cimport numpy as np
 np.import_array()
 
 from collections import Counter
+# --- MODIFICATION: Move cimport here ---
+#from libc.stddef cimport Py_ssize_t
+# --- END MODIFICATION ---
 
-# Import Python helpers from scrabble_helpers
 from scrabble_helpers import (
     CENTER_SQUARE, TILE_DISTRIBUTION,
     RED, PINK, BLUE, LIGHT_BLUE, LETTERS,
-    get_coord, get_anchor_points, Gaddag, GaddagNode, # get_anchor_points is called from Cython
+    get_coord, get_anchor_points, Gaddag, GaddagNode,
     DAWG as DAWG_cls
 )
-from scrabble_helpers import perform_leave_lookup # For leave evaluation callback
-
-# Import DAWG object (assuming it's loaded globally in Scrabble Game.py and passed)
-# We need DAWG for cross-checks and validation inside Cython now
-# This requires careful handling during initialization in the main script
+from scrabble_helpers import perform_leave_lookup
 
 DEF GRID_SIZE_C = 15
 
@@ -318,45 +316,43 @@ cpdef tuple is_valid_play(list word_positions, list tiles, bint is_first_play, i
 
 
 # --- _gaddag_traverse ---
-# Defined with 'def' as it's a Python function called recursively
 def _gaddag_traverse(
     anchor_pos,
-    int[:] rack_counts_c, # Memory view of incoming C int array
+    int[:] rack_counts_c,
     tiles,
     board,
     blanks,
     cross_check_sets,
-    gaddag_node, # Current node in GADDAG traversal (implicitly object)
-    object gaddag_root_node, # Root of the GADDAG structure
+    gaddag_node,
+    object gaddag_root_node,
     current_word_tiles,
-    bint is_reversed, # Already typed as bint
+    bint is_reversed,
     current_axis,
     all_found_moves,
     unique_move_signatures,
     original_tiles_state,
-    bint is_first_play, # Already typed as bint
+    bint is_first_play,
     int full_rack_size,
-    object dawg_obj, # Added DAWG object argument
+    object dawg_obj,
     int max_len=GRID_SIZE_C,
     int depth=0
 ):
-    """ Recursive helper using C array for rack counts. Creates new lists for recursion. """
-    # ... (cdef declarations) ...
+    # ... (function body unchanged) ...
     cdef object newly_placed_list_details, new_tiles_sig, temp_tiles, temp_blanks
     cdef object move_blanks_coords, newly_placed_coords, all_words_formed_details
     cdef object primary_word_tiles, primary_word_str, start_pos, orientation
     cdef str orientation_coord
     cdef object word_with_blanks_list, word_with_blanks, leave, move_details_dict
     cdef str letter
-    cdef object next_node # Reverted type back to object
+    cdef object next_node
     cdef object next_pos, existing_tile, cross_axis
     cdef object allowed_letters, tile_on_anchor
-    cdef int[:] current_rack_counts_c # Memory view for current level
-    cdef int[27] temp_rack_counts_c_arr # Actual C array for modification
-    cdef int i # Loop variable
-    cdef object r_last_py, c_last_py, _ign1, _ign2, _ign3 # Intermediate Python objects
-    cdef object last_elem # Variable for explicit check
-    cdef object next_rack_np_arr # To hold the new numpy array
+    cdef int[:] current_rack_counts_c
+    cdef int[27] temp_rack_counts_c_arr
+    cdef int i
+    cdef object r_last_py, c_last_py, _ign1, _ign2, _ign3
+    cdef object last_elem
+    cdef object next_rack_np_arr
     cdef int r_last, c_last, next_r, next_c, anchor_r, anchor_c, ref_r, ref_c, score
     cdef bint is_valid, is_bingo, just_crossed_separator
     cdef int letter_idx, blank_idx
@@ -552,6 +548,7 @@ def _gaddag_traverse(
 
 # --- compute_cross_checks_cython ---
 cpdef dict compute_cross_checks_cython(list tiles, object dawg_obj):
+    # ... (function body unchanged) ...
     cdef int r, c, rr, cc
     cdef str up_word, down_word, left_word, right_word, letter, full_word_v, full_word_h
     cdef set allowed_letters_v, allowed_letters_h
@@ -617,6 +614,7 @@ cpdef dict compute_cross_checks_cython(list tiles, object dawg_obj):
 
 # --- evaluate_leave_cython ---
 cpdef float evaluate_leave_cython(list rack, bint verbose=False):
+    # ... (function body unchanged) ...
     cdef int num_tiles = len(rack)
     cdef list rack_with_question_marks
     cdef str leave_key, tile
@@ -638,22 +636,17 @@ cpdef float evaluate_leave_cython(list rack, bint verbose=False):
         return 0.0
 
 
-# --- Helper function for sorting (used by generate_all_moves_gaddag_cython) ---
+# --- Helper function for sorting ---
 def _get_move_score_for_sort(move_dict):
     """Helper to safely get score for sorting, defaulting to -1."""
     if isinstance(move_dict, dict):
-        return move_dict.get('score', -1) # Default to -1 if score key missing
-    return -1 # Return -1 for non-dict items
+        return move_dict.get('score', -1)
+    return -1
 
 
-
-
-
-
-
-
-
-def generate_all_moves_gaddag_cython( # Changed from cpdef list
+# --- Consolidated Move Generation Function ---
+# --- MODIFICATION: Changed back to def ---
+def generate_all_moves_gaddag_cython(
 # --- END MODIFICATION ---
     object rack, # Keep as object
     object tiles,
@@ -668,16 +661,20 @@ def generate_all_moves_gaddag_cython( # Changed from cpdef list
     Defined as 'def' to bypass cpdef closure error.
     """
     # --- Type Declarations ---
+    # from libc.stddef cimport Py_ssize_t # Moved to top
     cdef list all_found_moves = []
     cdef set unique_move_signatures = set()
     cdef bint is_first_play
     cdef set anchors
     cdef list original_tiles_state
-    cdef int full_rack_size, i
-    cdef object rack_counts_py
-    cdef object rack_counts_c_arr
+    cdef int full_rack_size
+    cdef int i
+    cdef object rack_counts_py # Use object for Python Counter
+    # --- MODIFICATION: Changed back to object ---
+    cdef object rack_counts_c_arr # Use object for NumPy array fallback
+    # --- END MODIFICATION ---
     cdef dict cross_check_sets
-    # --- MODIFICATION: Ensure processed_adjacent_starts is declared ---
+    # --- MODIFICATION: Ensure declared ---
     cdef set processed_adjacent_starts = set()
     # --- END MODIFICATION ---
     cdef tuple anchor_pos, adj_pos
@@ -685,17 +682,18 @@ def generate_all_moves_gaddag_cython( # Changed from cpdef list
     cdef object allowed_h_obj, allowed_v_obj
     cdef set allowed_h, allowed_v
     cdef str tile_letter, existing_tile_letter, assigned_letter, start_axis
-    cdef int count, letter_idx_s1, blank_idx
+    cdef int count # Count from Counter items
+    cdef int letter_idx_s1, blank_idx
     cdef object next_node_obj
-    cdef object next_node
+    cdef object next_node # Keep as object for flexibility with GaddagNode
     cdef list initial_tiles
-    cdef object next_rack_counts_c_arr_s1, next_rack_counts_c_arr_blank
-    cdef object initial_rack_counts_c_copy
+    cdef object next_rack_counts_c_arr_s1, next_rack_counts_c_arr_blank # Use object
+    cdef object initial_rack_counts_c_copy # Use object
     cdef object anchor_r_obj, anchor_c_obj
     cdef int assigned_letter_ord
     cdef list final_unique_moves = []
     cdef set seen_final_signatures = set()
-    cdef dict move
+    cdef dict move # Keep as dict (Python object)
     cdef list sig_details, sig_tuple_list
     cdef tuple sig_tuple, item
     cdef bint valid_sig
@@ -705,11 +703,11 @@ def generate_all_moves_gaddag_cython( # Changed from cpdef list
          print("ERROR (Cython): GADDAG root or DAWG object is None in generate_all_moves.")
          return []
 
-    # Cast arguments back to expected types for internal use
+    # Cast Python objects if needed for clarity
     cdef list py_tiles = <list>tiles
     cdef list py_rack = <list>rack
-    cdef list py_board = <list>board # Cast board if needed by helpers
-    cdef set py_blanks = <set>blanks # Cast blanks
+    cdef list py_board = <list>board
+    cdef set py_blanks = <set>blanks
 
     is_first_play = sum(1 for row in py_tiles for t in row if t) == 0
     anchors = get_anchor_points(py_tiles, is_first_play) # Call Python helper
@@ -717,7 +715,7 @@ def generate_all_moves_gaddag_cython( # Changed from cpdef list
     full_rack_size = len(py_rack)
 
     rack_counts_py = Counter(py_rack)
-    rack_counts_c_arr = np.zeros(27, dtype=np.intc)
+    rack_counts_c_arr = np.zeros(27, dtype=np.intc) # Create NumPy array
     for i in range(26):
         letter = chr(ord('A') + i)
         # --- MODIFICATION: Remove <Counter> cast ---
@@ -787,9 +785,9 @@ def generate_all_moves_gaddag_cython( # Changed from cpdef list
                 nc = c_anchor + dc
                 adj_pos = (nr, nc)
                 if 0 <= nr < GRID_SIZE_C and 0 <= nc < GRID_SIZE_C:
-                    existing_tile_letter = py_tiles[nr][nc] # Use cast variable
+                    existing_tile_letter = py_tiles[nr][nc]
                     if existing_tile_letter and adj_pos not in processed_adjacent_starts:
-                         processed_adjacent_starts.add(adj_pos) # Use cdef variable
+                         processed_adjacent_starts.add(adj_pos)
                          next_node_obj = getattr(gaddag_root, 'children', {}).get(existing_tile_letter)
                          if next_node_obj is not None:
                             next_node = next_node_obj
@@ -799,7 +797,9 @@ def generate_all_moves_gaddag_cython( # Changed from cpdef list
                             _gaddag_traverse(anchor_pos, initial_rack_counts_c_copy, py_tiles, py_board, py_blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size, dawg_obj)
 
     # --- Post-processing Phase ---
+    # --- MODIFICATION: Use helper function for sort key ---
     all_found_moves.sort(key=_get_move_score_for_sort, reverse=True)
+    # --- END MODIFICATION ---
 
     final_unique_moves = []
     seen_final_signatures = set()
