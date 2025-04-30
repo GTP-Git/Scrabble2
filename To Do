@@ -14,6 +14,8 @@ To-Do List
 
 -- Can the AI figure out how to make set-up plays?
 
+-- I think the code may already be there, but design a Save format that allows the full game to be recreated, racks and all.
+
 -- Remove ALL debug print in batch mode.
 
 -- In Replay Mode, limit the Option menu to Main (anything else?) and relocate it in this mode so that it's functional.
