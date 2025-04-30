@@ -10,9 +10,11 @@ To-Do List
 
 -- Need a way for the user to stop batch games and AI simulation process. Maybe add button to this effect. Need listeners for it.
 
---Power Tiles game over dialog should have a Main button, and the Play Again button should re-runthe Power Tiles mode.
+-- Power Tiles game over dialog should have a Main button, and the Play Again button should re-run the Power Tiles mode.
 
--- Disable debug print for moves during Batch. No one is watching the batch, so no need to slow things down with printing
+-- In Replay Mode, limit the Option menu to Main (anything else?) and relocate it in this mode so that it's functional.
+
+-- In Only Fives mode, show another button in the Suggest dialog that says "Only Fives" which only shows 5-letter words.
 
 -- Create a separate CONSTANTS.py file
 
@@ -22,7 +24,6 @@ To-Do List
 
 -- AI should try to estimate the opponent's rack based on the remaining pool, but the current logic treats all unseen tiles equally.
 
--- Figure out how leave evaluation is done. Should we multiply the static value of a letter with it's probability of being drawn? And what about incorporating 2-leave synergies, with their corresponding probability of being drawn?
 
 
 
@@ -166,5 +167,11 @@ ________________________________________________
 -- Give option for Developer Tools on the Mode Selection screen, where options like Profile, etc. are shown
 
 -- In batch game text file, break bingos played down into quartiles.
+
+-- Disable debug print for moves during Batch. No one is watching the batch, so no need to slow things down with printing
+
+-- Figure out how leave evaluation is done. Should we multiply the static value of a letter with it's probability of being drawn? And what about incorporating 2-leave synergies, with their corresponding probability of being drawn?
+
+
 
 
