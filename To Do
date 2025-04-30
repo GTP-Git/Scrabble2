@@ -14,6 +14,8 @@ To-Do List
 
 -- Can the AI figure out how to make set-up plays?
 
+-- Remove ALL debug print in batch mode.
+
 -- In Replay Mode, limit the Option menu to Main (anything else?) and relocate it in this mode so that it's functional.
 
 -- The AI sometimes plays vertically to start the game. Where is this in the code. 50/50 V/H would be nice.
