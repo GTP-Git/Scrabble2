@@ -16,6 +16,8 @@ To-Do List
 
 -- In Only Fives mode, show another button in the Suggest dialog that says "Only Fives" which only shows 5-letter words.
 
+-- On the Batch text file, show the absolute number of bingos in each quartile, and list what the quartiles represent, like 1-12000 for Q1, etc.
+
 -- Create a separate CONSTANTS.py file
 
 -- How does the AI determine if it's the first or second play? Bug arose where P1 passed, AI 2 then encountered Invalid Play msg because it thought it was the first play because no tiles were on the board. Need to change how that's determined.
