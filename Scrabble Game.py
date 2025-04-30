@@ -4423,8 +4423,9 @@ def draw_simulation_config_dialog(input_texts, active_input_index):
 
 
 
-# python
-# MODIFIED: Removed visual feedback updates for speed optimization
+# Function to Replace: run_ai_simulation
+# REASON: Call generate_all_moves_gaddag_cython instead of deleted Python version.
+
 def run_ai_simulation(ai_rack, opponent_rack_len, tiles, blanks, board, bag, gaddag_root, is_first_play,
                       board_tile_counts, # Added board_tile_counts
                       # Parameters use global defaults defined earlier
@@ -4437,6 +4438,7 @@ def run_ai_simulation(ai_rack, opponent_rack_len, tiles, blanks, board, bag, gad
     then evaluates the top K results using the LEAVE_LOOKUP_TABLE (float values).
     Uses board_tile_counts for pool calculation. Includes debug prints.
     Removed visual feedback for performance.
+    Calls generate_all_moves_gaddag_cython.
 
     Args:
         ai_rack (list): The AI's current rack.
@@ -4456,20 +4458,32 @@ def run_ai_simulation(ai_rack, opponent_rack_len, tiles, blanks, board, bag, gad
         list: A list of dictionaries, each containing {'move': move_dict, 'final_score': float},
               sorted by 'final_score' descending. Returns empty list if no moves or simulation fails.
     """
+    # --- Access Globals ---
+    global DAWG # Need DAWG for move generation
+
     import time # Ensure time module is available
     print("--- Running AI 2-Ply Simulation ---") # DEBUG START
     print(f"  Params: AI Cands={num_ai_candidates}, Opp Sims={num_opponent_sims}, Post Sims={num_post_sim_candidates}")
     print(f"  AI Rack: {''.join(sorted(ai_rack))}, Opp Rack Len: {opponent_rack_len}, Bag: {len(bag)}")
 
-    # --- Simulation Indicator Setup REMOVED ---
-    # sim_font = pygame.font.SysFont("Arial", 30, bold=True)
-    # sim_text_surf = sim_font.render("Simulating...", True, RED, PALE_YELLOW)
-    # sim_text_rect = sim_text_surf.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2))
-    # last_update_time = time.time()
-    # --- End Indicator Setup REMOVED ---
-
     print("  Generating initial AI moves...") # DEBUG
-    all_ai_moves = generate_all_moves_gaddag(ai_rack, tiles, board, blanks, gaddag_root)
+    # --- MODIFICATION: Call Cython version ---
+    try:
+        # Ensure GADDAG/DAWG are available
+        if gaddag_root is None or DAWG is None:
+             print("ERROR (run_ai_simulation): GADDAG/DAWG not available for move generation.")
+             all_ai_moves = []
+        else:
+             all_ai_moves = generate_all_moves_gaddag_cython(
+                 ai_rack, tiles, board, blanks, gaddag_root, DAWG
+             )
+        if all_ai_moves is None: all_ai_moves = []
+    except Exception as e_gen:
+        print(f"ERROR during initial AI move generation in simulation: {e_gen}")
+        import traceback
+        traceback.print_exc()
+        all_ai_moves = []
+    # --- END MODIFICATION ---
     print(f"  Generated {len(all_ai_moves) if all_ai_moves else 0} initial AI moves.") # DEBUG
 
     if not all_ai_moves:
@@ -4479,46 +4493,24 @@ def run_ai_simulation(ai_rack, opponent_rack_len, tiles, blanks, board, bag, gad
 
     # 1. Select Top N AI moves based on raw score
     all_ai_moves.sort(key=lambda m: m.get('score', 0), reverse=True)
-    # --- USE PARAMETER ---
     top_ai_moves_candidates = all_ai_moves[:num_ai_candidates]
     print(f"  Simulating top {len(top_ai_moves_candidates)} AI moves...")
-    # --- END USE PARAMETER ---
 
     simulation_results = [] # Store tuples: (ai_move, avg_opponent_score)
-    # --- USE PARAMETER ---
     num_simulations_per_move = num_opponent_sims
-    # --- END USE PARAMETER ---
 
     # --- Pre-calculate unseen tiles for opponent rack simulation ---
-    # --- MODIFICATION: Use board_tile_counts ---
     remaining_dict = get_remaining_tiles(ai_rack, board_tile_counts)
-    # --- END MODIFICATION ---
     unseen_tiles_pool = []
     for tile, count in remaining_dict.items():
         unseen_tiles_pool.extend([tile] * count)
     print(f"  Unseen Pool Size: {len(unseen_tiles_pool)}") # DEBUG
 
-    # --- USE PARAMETER ---
     for i, ai_move in enumerate(top_ai_moves_candidates):
-        # --- Periodic Update REMOVED ---
-        # current_time = time.time()
-        # if current_time - last_update_time > 0.5: # Update roughly 2 times/sec
-        #     screen.blit(sim_text_surf, sim_text_rect)
-        #     pygame.display.flip()
-        #     pygame.event.pump() # Process internal events (like QUIT)
-        #     last_update_time = current_time
-        #     # Check for quit events explicitly
-        #     for event in pygame.event.get(pygame.QUIT):
-        #          print("--- Simulation interrupted by QUIT event ---")
-        #          return [] # Abort simulation
-        # --- End Update REMOVED ---
 
-        # Minimal console output during simulation loop
-        # --- DEBUG PRINT ---
         move_word = ai_move.get('word_with_blanks', ai_move.get('word', '?'))
         move_score = ai_move.get('score', 0)
         print(f"\n  Simulating AI move {i+1}/{len(top_ai_moves_candidates)}: '{move_word}' ({move_score} pts)")
-        # --- END DEBUG PRINT ---
 
         total_opponent_score_for_this_move = 0
         ai_score = ai_move.get('score', 0)
@@ -4531,9 +4523,12 @@ def run_ai_simulation(ai_rack, opponent_rack_len, tiles, blanks, board, bag, gad
         sim_bag_after_ai = bag[:]
         move_blanks = ai_move.get('blanks', set())
         valid_placement = True
+        # Create a temporary counter for board tiles *after* AI move
+        sim_board_counts_after_ai = board_tile_counts.copy()
         for r, c, letter in ai_move.get('newly_placed', []):
             if 0 <= r < GRID_SIZE and 0 <= c < GRID_SIZE:
                 sim_tiles_after_ai[r][c] = letter
+                sim_board_counts_after_ai[letter] += 1 # Update counter
                 if (r, c) in move_blanks:
                     sim_blanks_after_ai.add((r, c))
                     if ' ' in sim_rack_after_ai: sim_rack_after_ai.remove(' ')
@@ -4550,100 +4545,77 @@ def run_ai_simulation(ai_rack, opponent_rack_len, tiles, blanks, board, bag, gad
         for _ in range(num_to_draw_ai):
             if sim_bag_after_ai: drawn_ai.append(sim_bag_after_ai.pop())
         sim_rack_after_ai.extend(drawn_ai)
-        # --- End AI move simulation ---
         print(f"    State after AI move: Bag={len(sim_bag_after_ai)}") # DEBUG
 
         # --- Loop M times for opponent simulation ---
         print(f"    Starting {num_simulations_per_move} opponent simulations...") # DEBUG
         for sim_run in range(num_simulations_per_move):
-            # --- Periodic Update REMOVED ---
-            # if sim_run % 20 == 0: # Update less frequently within inner loop too
-            #      current_time_inner = time.time()
-            #      if current_time_inner - last_update_time > 0.5: # Update ~2 times/sec
-            #          screen.blit(sim_text_surf, sim_text_rect)
-            #          pygame.display.flip()
-            #          pygame.event.pump() # Process internal events
-            #          last_update_time = current_time_inner
-            #          # Check for quit events explicitly
-            #          for event in pygame.event.get(pygame.QUIT):
-            #               print("--- Simulation interrupted by QUIT event (inner loop) ---")
-            #               return [] # Abort simulation
-            # --- End Update REMOVED ---
-
             opponent_available_pool = unseen_tiles_pool[:]
             temp_drawn_ai_counts = Counter(drawn_ai)
             temp_pool_copy = opponent_available_pool[:]
-            # --- DEBUG: Check pool adjustment ---
-            # print(f"        Pool before adj: {len(opponent_available_pool)}, Drawn AI: {''.join(sorted(drawn_ai))}")
             for tile in temp_pool_copy:
                  if temp_drawn_ai_counts.get(tile, 0) > 0:
                       temp_drawn_ai_counts[tile] -= 1
                       try:
                           opponent_available_pool.remove(tile)
                       except ValueError:
-                          # This might happen if drawn_ai had duplicates not fully represented in the initial pool calculation
-                          # (e.g., if board_tile_counts was slightly off) - print a warning
                           print(f"        WARNING: Could not remove tile '{tile}' from opponent pool during adjustment.")
-            # print(f"        Pool after adj: {len(opponent_available_pool)}")
-            # --- END DEBUG ---
-
             random.shuffle(opponent_available_pool)
             actual_opponent_rack_len = min(opponent_rack_len, len(opponent_available_pool))
             sim_opponent_rack = opponent_available_pool[:actual_opponent_rack_len]
-            # --- DEBUG PRINT ---
-            # print(f"        Sim Opp Rack: {''.join(sorted(sim_opponent_rack))}")
-            # --- END DEBUG PRINT ---
 
-            # --- DEBUG: Check if generate_all_moves_gaddag hangs here ---
-            # print(f"        Generating opponent moves...")
-            opponent_moves = generate_all_moves_gaddag(
-                sim_opponent_rack, sim_tiles_after_ai, board, sim_blanks_after_ai, gaddag_root
-            )
-            # print(f"        Generated {len(opponent_moves) if opponent_moves else 0} opponent moves.")
-            # --- END DEBUG ---
+            # --- MODIFICATION: Call Cython version for opponent moves ---
+            try:
+                # Ensure GADDAG/DAWG are available
+                if gaddag_root is None or DAWG is None:
+                     print("ERROR (run_ai_simulation opp): GADDAG/DAWG not available.")
+                     opponent_moves = []
+                else:
+                     opponent_moves = generate_all_moves_gaddag_cython(
+                         sim_opponent_rack, sim_tiles_after_ai, board, sim_blanks_after_ai, gaddag_root, DAWG
+                     )
+                if opponent_moves is None: opponent_moves = []
+            except Exception as e_gen_opp:
+                print(f"ERROR during opponent move generation in simulation: {e_gen_opp}")
+                opponent_moves = []
+            # --- END MODIFICATION ---
 
             best_opponent_score = 0
             if opponent_moves:
                 opponent_moves.sort(key=lambda m: m.get('score', 0), reverse=True)
                 best_opponent_score = opponent_moves[0].get('score', 0)
             total_opponent_score_for_this_move += best_opponent_score
-        # --- End opponent simulation loop ---
         print(f"    Finished opponent simulations for AI move {i+1}.") # DEBUG
 
         average_opponent_score = total_opponent_score_for_this_move / num_simulations_per_move
-        # --- Store avg_opp_score directly with the move for later use ---
-        ai_move['avg_opp_score'] = average_opponent_score # Add score to the dict
-        simulation_results.append(ai_move) # Store the augmented move dict
-        # --- End store avg_opp_score ---
+        ai_move['avg_opp_score'] = average_opponent_score
+        simulation_results.append(ai_move)
 
 
     if not simulation_results:
          print(f"  Simulation: No results generated. Falling back.")
-         return top_ai_moves_candidates if top_ai_moves_candidates else []
+         # If simulation fails, return top raw-scoring moves without simulation data
+         return [{'move': m, 'final_score': m.get('score',0)} for m in top_ai_moves_candidates]
 
 
     # 2. Select Top K based on (AI Score - Avg Opponent Score)
     simulation_results.sort(key=lambda r: r.get('score', 0) - r.get('avg_opp_score', 0.0), reverse=True)
-    # --- USE PARAMETER ---
     top_sim_results = simulation_results[:num_post_sim_candidates]
-    # --- END USE PARAMETER ---
 
     # 3. Apply Leave Evaluation (Lookup) to Top K
     print("--- Evaluating Top Simulation Results with Leave Lookup ---")
     final_evaluated_moves = []
     for move_result in top_sim_results:
-        ai_move = move_result # Already contains avg_opp_score
+        ai_move = move_result
         avg_opp_score = ai_move.get('avg_opp_score', 0.0)
         ai_raw_score = ai_move.get('score', 0)
         leave = ai_move.get('leave', [])
-        # --- Use the new evaluate_leave (lookup, returns float) ---
-        leave_value = evaluate_leave_cython(leave)
-        # Update console output format ---
-        leave_str_eval = "".join(sorted(['?' if tile == ' ' else tile for tile in leave])) # Use '?' for display
+        leave_value = evaluate_leave_cython(leave) # Returns float
+        leave_str_eval = "".join(sorted(['?' if tile == ' ' else tile for tile in leave]))
         word_eval = ai_move.get('word_with_blanks', ai_move.get('word', '?'))
-        print(f"  Evaluating: {word_eval} ({ai_raw_score} pts), Leave: '{leave_str_eval}', Lookup Value: {leave_value:.2f}") # Format as float
+        print(f"  Evaluating: {word_eval} ({ai_raw_score} pts), Leave: '{leave_str_eval}', Lookup Value: {leave_value:.2f}")
 
-        final_eval_score = float(ai_raw_score) + leave_value - float(avg_opp_score) # Ensure float arithmetic
+        final_eval_score = float(ai_raw_score) + leave_value - float(avg_opp_score)
         final_evaluated_moves.append({'move': ai_move, 'final_score': final_eval_score})
     print("-" * 20)
 
@@ -4660,20 +4632,15 @@ def run_ai_simulation(ai_rack, opponent_rack_len, tiles, blanks, board, bag, gad
         raw_score = move.get('score', 0)
         leave_list = move.get('leave', [])
         leave_str = "".join(sorted(l if l != ' ' else '?' for l in leave_list))
-        avg_opp = move.get('avg_opp_score', 0.0) # Get stored score
-        # Get leave value again for printing (it was calculated above)
+        avg_opp = move.get('avg_opp_score', 0.0)
         leave_val = evaluate_leave_cython(leave_list)
-        # Update print format ---
-        print(f"  {i+1}. {word} at {coord} ({raw_score}) L:'{leave_str}' ({leave_val:.2f}) OppAvg:{avg_opp:.1f} -> Final:{final_score:.1f}") # Format leave_val and final_score
+        print(f"  {i+1}. {word} at {coord} ({raw_score}) L:'{leave_str}' ({leave_val:.2f}) OppAvg:{avg_opp:.1f} -> Final:{final_score:.1f}")
 
     print("-" * 20)
-    # --- End Print Top 5 ---
 
-    # sim_duration = time.time() - start_time # Calculate duration # Removed duration calculation/print
-    print(f"--- AI Simulation Complete ---") # Removed duration print
+    print(f"--- AI Simulation Complete ---")
 
-    # --- MODIFIED RETURN ---
-    return final_evaluated_moves # Return the full sorted list of evaluated moves
+    return final_evaluated_moves
 
 
 
