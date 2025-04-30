@@ -12,6 +12,8 @@ To-Do List
 
 -- Power Tiles game over dialog should have a Main button, and the Play Again button should re-run the Power Tiles mode.
 
+-- Can the AI figure out how to make set-up plays?
+
 -- In Replay Mode, limit the Option menu to Main (anything else?) and relocate it in this mode so that it's functional.
 
 -- The AI sometimes plays vertically to start the game. Where is this in the code. 50/50 V/H would be nice.
