@@ -1,159 +1,44 @@
-#Scrabble 29APR25 Cython V5
-
-
 # gaddag_cython.pyx
 # cython: language_level=3
 
 import cython # To use decorators like @cython.locals
-import numpy as np # Keep NumPy import as it's used in _gaddag_traverse
+import numpy as np
+cimport numpy as np
+np.import_array()
 
-# Import necessary Python modules/classes
 from collections import Counter
 
-# Import helpers and constants FROM scrabble_helpers
-# *** REMOVED DAWG import ***
+# Import Python helpers from scrabble_helpers
 from scrabble_helpers import (
     CENTER_SQUARE, TILE_DISTRIBUTION,
     RED, PINK, BLUE, LIGHT_BLUE, LETTERS,
-    get_coord, get_anchor_points, Gaddag, GaddagNode, # Ensure GaddagNode is imported
-    DAWG as DAWG_cls # Import the CLASS definition for type checking if needed elsewhere
-    )
+    get_coord, get_anchor_points, Gaddag, GaddagNode, # get_anchor_points is called from Cython
+    DAWG as DAWG_cls
+)
+from scrabble_helpers import perform_leave_lookup # For leave evaluation callback
 
-from scrabble_helpers import perform_leave_lookup
+# Import DAWG object (assuming it's loaded globally in Scrabble Game.py and passed)
+# We need DAWG for cross-checks and validation inside Cython now
+# This requires careful handling during initialization in the main script
 
-
-# --- Define GRID_SIZE as a C constant ---
 DEF GRID_SIZE_C = 15
 
-
-
-
-
-##########################################################################################################
-##########################################################################################################
-##########################################################################################################
-
-
-
-
-
-
-
-
-# --- MODIFIED FUNCTION ---
-cpdef float evaluate_leave_cython(list rack, bint verbose=False): # Keep verbose argument
-    """
-    Generates the leave key and calls a Python helper function for the lookup.
-
-    Args:
-        rack (list): A list of characters representing the tiles left (blanks as ' ').
-        verbose (bool): If True, print lookup details (optional).
-
-    Returns:
-        float: The score adjustment from the lookup table, or 0.0.
-    """
-    # --- REMOVED: Force verbose for debugging ---
-    # verbose = True
-
-    cdef int num_tiles = len(rack)
-    cdef list rack_with_question_marks
-    cdef str leave_key, tile
-    cdef float leave_float = 0.0 # Initialize return value
-    # --- REMOVED: key_count variable ---
-    # cdef int key_count = 0
-
-    # --- REMOVED Type check (can be added back if needed) ---
-    # if not isinstance(leave_lookup_table_obj, dict): ...
-
-    # --- REMOVED Key Iteration Check ---
-    # if verbose: ...
-
-    # --- REMOVED Direct Key Check ---
-    # if verbose: ...
-
-    if num_tiles == 0:
-        # --- REMOVED Verbose Print ---
-        # if verbose: print("--- Evaluating Leave (Cython): Empty rack -> 0.0")
-        return 0.0 # Return float
-    if num_tiles > 6:
-        # --- REMOVED Verbose Print ---
-        # if verbose: print(f"--- Evaluating Leave (Cython): Rack length {num_tiles} > 6 -> 0.0")
-        return 0.0 # Return float
-
-    # Create the sorted key for lookup
-    rack_with_question_marks = ['?' if tile == ' ' else tile for tile in rack]
-    leave_key = "".join(sorted(rack_with_question_marks))
-
-    # --- REMOVED Verbose Print ---
-    # if verbose: print(f"--- Evaluating Leave (Cython): Input rack: {rack}, Generated key: '{leave_key}'")
-
-    try:
-        # Call Python helper function from scrabble_helpers
-        leave_float = perform_leave_lookup(leave_key) # Call imported function
-        # --- REMOVED Verbose Print ---
-        # if verbose: print(f"--- Evaluating Leave (Cython): Python lookup returned: {leave_float:.2f}")
-        return leave_float
-
-    except Exception as e:
-        # Catch potential errors during the callback or key generation
-        # Keep error print for actual errors
-        print(f"Error (Cython) generating key or calling Python lookup for rack '{rack}': {e}")
-        return 0.0 # Return float
-
-
-
-
-
-
-
-
-
-##########################################################################################################
-##########################################################################################################
-##########################################################################################################
-
-
-
-
-
-
-# Keep as cdef (internal helper)
+# --- get_char_index ---
 cdef int get_char_index(str letter):
     cdef int index
-    if letter == '?': # Use '?' internally for blank index
+    if letter == '?':
         index = 26
-    elif 'A' <= letter <= 'Z': # Added check for valid letter range
+    elif 'A' <= letter <= 'Z':
         index = ord(letter) - ord('A')
     else:
-        return -1 # Indicate error
+        return -1
     return index
-
-
-
-
-
-# --- Helper functions for find_all_words_formed (Defined BEFORE find_all_words_formed) ---
-
-
-
-
-
-##########################################################################################################
-##########################################################################################################
-##########################################################################################################
-
-
-
-
-
-
 
 # --- find_cross_word ---
 cdef list find_cross_word(tuple tile, list tiles, str main_orientation):
-    """Finds a cross word formed by a single tile perpendicular to the main word."""
     cdef int r, c, min_row, max_row, min_col, max_col, rr_cw, cc_cw
     cdef list cross_word = []
-    cdef object r_obj, c_obj, _ # Intermediate Python objects for unpacking
+    cdef object r_obj, c_obj, _
 
     r_obj, c_obj, _ = tile
     r = <int>r_obj
@@ -182,25 +67,8 @@ cdef list find_cross_word(tuple tile, list tiles, str main_orientation):
 
     return cross_word if len(cross_word) > 1 else []
 
-
-
-
-
-
-##########################################################################################################
-##########################################################################################################
-##########################################################################################################
-
-
-
-
-
-
-
-
 # --- find_main_word ---
 cdef tuple find_main_word(list new_tiles, list tiles):
-    """Finds the primary word formed by newly placed tiles."""
     cdef int row, col, min_row, max_row, min_col, max_col, r_nt, c_nt, c_mw, r_mw
     cdef list main_word
     cdef str orientation
@@ -210,20 +78,20 @@ cdef tuple find_main_word(list new_tiles, list tiles):
 
     if not new_tiles: return [], None
 
-    for tile_tuple in new_tiles: # Iterate through tuples
+    for tile_tuple in new_tiles:
         if isinstance(tile_tuple, tuple) and len(tile_tuple) >= 3:
-            r_nt_obj, c_nt_obj, _ign1_nt = tile_tuple[:3] # Unpack first 3
+            r_nt_obj, c_nt_obj, _ign1_nt = tile_tuple[:3]
             r_nt = <int>r_nt_obj
             c_nt = <int>c_nt_obj
             rows_set.add(r_nt)
             cols_set.add(c_nt)
         else:
-            pass # Handle error or skip invalid entry if necessary
+            pass
 
     if len(rows_set) == 1:
         orientation = "horizontal"; row = rows_set.pop()
         min_col = 999; max_col = -1
-        for tile_tuple in new_tiles: # Iterate again
+        for tile_tuple in new_tiles:
             if isinstance(tile_tuple, tuple) and len(tile_tuple) >= 3:
                 r_nt_obj, c_nt_obj, _ign1_nt = tile_tuple[:3]
                 r_nt = <int>r_nt_obj; c_nt = <int>c_nt_obj
@@ -240,7 +108,7 @@ cdef tuple find_main_word(list new_tiles, list tiles):
     elif len(cols_set) == 1:
         orientation = "vertical"; col = cols_set.pop()
         min_row = 999; max_row = -1
-        for tile_tuple in new_tiles: # Iterate again
+        for tile_tuple in new_tiles:
             if isinstance(tile_tuple, tuple) and len(tile_tuple) >= 3:
                 r_nt_obj, c_nt_obj, _ign1_nt = tile_tuple[:3]
                 r_nt = <int>r_nt_obj; c_nt = <int>c_nt_obj
@@ -256,27 +124,8 @@ cdef tuple find_main_word(list new_tiles, list tiles):
         return (main_word, orientation) if len(main_word) > 1 else ([], None)
     else: return [], None
 
-
-
-
-
-
-
-
-##########################################################################################################
-##########################################################################################################
-##########################################################################################################
-
-
-
-
-
-
-
 # --- find_all_words_formed ---
-# Use cpdef (called from Python) - Defined BEFORE is_valid_play
 cpdef list find_all_words_formed(list new_tiles, list tiles):
-    """Finds all words (main and cross) formed by a play."""
     cdef list words = []
     cdef set new_positions_set = set()
     cdef list main_word_tiles, cross_word, unique_word_tile_lists
@@ -291,26 +140,22 @@ cpdef list find_all_words_formed(list new_tiles, list tiles):
     for r_np, c_np, _ in new_tiles:
         new_positions_set.add((r_np, c_np))
 
-    main_word_tiles, orientation = find_main_word(new_tiles, tiles) # Call local cdef function
+    main_word_tiles, orientation = find_main_word(new_tiles, tiles)
 
     if main_word_tiles:
         words.append(main_word_tiles)
-        for tile in new_tiles: # tile is a tuple (r, c, letter)
-            # Check if the tile position is one of the newly placed ones
+        for tile in new_tiles:
             if (tile[0], tile[1]) in new_positions_set:
-                cross_word = find_cross_word(tile, tiles, orientation) # Call local cdef function
+                cross_word = find_cross_word(tile, tiles, orientation)
                 if cross_word:
                     words.append(cross_word)
-    elif len(new_tiles) == 1: # Handle single tile plays forming only cross words
+    elif len(new_tiles) == 1:
         tile = new_tiles[0]
-        # Check horizontal cross word (pass "vertical" as main orientation)
         cross_h = find_cross_word(tile, tiles, "vertical");
         if cross_h: words.append(cross_h)
-        # Check vertical cross word (pass "horizontal" as main orientation)
         cross_v = find_cross_word(tile, tiles, "horizontal");
         if cross_v: words.append(cross_v)
 
-    # Deduplicate based on exact tile positions and letters
     unique_word_tile_lists = []; seen_signatures = set()
     for word_tile_list in words:
         sig_list = []
@@ -323,27 +168,8 @@ cpdef list find_all_words_formed(list new_tiles, list tiles):
 
     return unique_word_tile_lists
 
-
-
-
-
-##########################################################################################################
-##########################################################################################################
-##########################################################################################################
-
-
-
-
-
-
-
-
-
-
 # --- calculate_score ---
-# Use cpdef (called from Python) - Defined BEFORE is_valid_play
 cpdef int calculate_score(list new_tiles, list board, list tiles, set blanks):
-    """Calculates the score for a play based on newly placed tiles."""
     cdef int total_score = 0, word_score, word_multiplier
     cdef int r, c, letter_value, letter_multiplier, r_np, c_np
     cdef bint is_blank
@@ -354,7 +180,7 @@ cpdef int calculate_score(list new_tiles, list board, list tiles, set blanks):
     cdef str letter
     cdef object square_color
 
-    words_formed_details = find_all_words_formed(new_tiles, tiles) # Call local cpdef function
+    words_formed_details = find_all_words_formed(new_tiles, tiles)
 
     for word_tiles in words_formed_details:
         word_score = 0; word_multiplier = 1
@@ -375,29 +201,8 @@ cpdef int calculate_score(list new_tiles, list board, list tiles, set blanks):
     if len(new_tiles) == 7: total_score += 50
     return total_score
 
-
-
-
-
-##########################################################################################################
-##########################################################################################################
-##########################################################################################################
-
-
-
-
-
-
-
-
-
-
-
 # --- is_valid_play ---
-# Use cpdef (called from Python)
 cpdef tuple is_valid_play(list word_positions, list tiles, bint is_first_play, int initial_rack_size, list original_tiles, object rack, object dawg_obj):
-    """Validate a potential play against game rules and dictionary."""
-    # --- Start of indented block (4 spaces) ---
     cdef set newly_placed_positions_coords
     cdef list rows_list, cols_list, all_words_details, formed_word_strings
     cdef bint is_horizontal, is_vertical, connects, is_bingo
@@ -409,10 +214,7 @@ cpdef tuple is_valid_play(list word_positions, list tiles, bint is_first_play, i
     cdef bint dawg_search_result
     cdef set rows_set_local, cols_set_local
     cdef list word_chars, word_detail
-    # --- Declare tile_detail explicitly as object initially ---
     cdef object tile_detail
-
-    # --- Added for loop replacement ---
     cdef bint center_square_played = False
     cdef int center_r, center_c
 
@@ -454,57 +256,39 @@ cpdef tuple is_valid_play(list word_positions, list tiles, bint is_first_play, i
             if not tiles[r][c]:
                 return False, False
 
-    # --- Word Validity Check ---
-    all_words_details = find_all_words_formed(word_positions, tiles) # Call local cpdef function
-
-    # --- DEBUG ---
-    # print(f"DEBUG is_valid_play: Type(all_words_details)={type(all_words_details)}")
-    # print(f"DEBUG is_valid_play: all_words_details = {all_words_details}")
-    # --- END DEBUG ---
+    all_words_details = find_all_words_formed(word_positions, tiles)
 
     if not all_words_details and len(word_positions) > 1:
          return False, False
 
     formed_word_strings = []
-    for word_detail in all_words_details: # all_words_details is the list of lists
-        # --- DEBUG ---
-        # print(f"DEBUG is_valid_play: Processing word_detail: {word_detail} (Type: {type(word_detail)})")
-        # --- END DEBUG ---
+    for word_detail in all_words_details:
         if not isinstance(word_detail, list):
-            print(f"WARNING: Expected list in all_words_details, got {type(word_detail)}: {word_detail}")
-            continue # Skip this entry
-
+            continue
         word_chars = []
-        # --- MODIFICATION: Explicitly handle tile_detail ---
-        for item in word_detail: # Iterate through items in the list
-            # Ensure item is a tuple of expected length before accessing index
+        for item in word_detail:
             if isinstance(item, tuple) and len(item) >= 3:
-                tile_detail = item # Assign to typed variable (optional here, but good practice)
-                word_chars.append(tile_detail[2]) # Access element 2
+                tile_detail = item
+                word_chars.append(tile_detail[2])
             else:
-                print(f"WARNING: Expected tuple of len>=3 in word_detail list, got {type(item)}: {item}")
-                continue # Skip this malformed item
-        # --- END MODIFICATION ---
+                continue
         word_str = "".join(word_chars)
-        if word_str: # Only add non-empty strings
+        if word_str:
             formed_word_strings.append(word_str)
 
     if not formed_word_strings and len(word_positions) > 1:
-         print("WARNING: No valid word strings formed after processing details.")
          return False, False
 
-    if dawg_obj is None: # Safety check
+    if dawg_obj is None:
          print("ERROR: DAWG object not passed to is_valid_play!")
          return False, False
     for word in formed_word_strings:
-        dawg_search_result = dawg_obj.search(word) # Use argument
+        dawg_search_result = dawg_obj.search(word)
         if not dawg_search_result:
-            # print(f"DEBUG is_valid_play: Invalid word found: {word}") # Optional debug
             return False, False
 
-    # --- Connection Rules Check ---
     if is_first_play:
-        center_r, center_c = CENTER_SQUARE # Unpack tuple
+        center_r, center_c = CENTER_SQUARE
         center_square_played = False
         for r, c in newly_placed_positions_coords:
             if r == center_r and c == center_c:
@@ -527,27 +311,14 @@ cpdef tuple is_valid_play(list word_positions, list tiles, bint is_first_play, i
         if not connects:
             return False, False
 
-    # --- Bingo Check ---
     tiles_played_from_rack = len(newly_placed_positions_coords)
     is_bingo = (initial_rack_size == 7 and tiles_played_from_rack == 7)
 
     return True, is_bingo
-    # --- End of indented block ---
-
-
-
-
-
-
-#################################################################
-#################################################################
-#################################################################
-
-
 
 
 # --- _gaddag_traverse ---
-# (Defined AFTER is_valid_play, calculate_score, find_all_words_formed)
+# Defined with 'def' as it's a Python function called recursively
 def _gaddag_traverse(
     anchor_pos,
     int[:] rack_counts_c, # Memory view of incoming C int array
@@ -570,7 +341,7 @@ def _gaddag_traverse(
     int depth=0
 ):
     """ Recursive helper using C array for rack counts. Creates new lists for recursion. """
-    # ... (cdef declarations remain the same) ...
+    # ... (cdef declarations) ...
     cdef object newly_placed_list_details, new_tiles_sig, temp_tiles, temp_blanks
     cdef object move_blanks_coords, newly_placed_coords, all_words_formed_details
     cdef object primary_word_tiles, primary_word_str, start_pos, orientation
@@ -595,16 +366,20 @@ def _gaddag_traverse(
     if not current_word_tiles: return
     if len(current_word_tiles) > max_len: return
 
-    last_elem = current_word_tiles[-1]
-    if isinstance(last_elem, (list, tuple)) and len(last_elem) == 5:
-        r_last_py, c_last_py, _ign1, _ign2, _ign3 = last_elem
-        r_last = <int>r_last_py
-        c_last = <int>c_last_py
-    else:
-        raise TypeError(f"Expected 5-tuple at end of current_word_tiles, got {type(last_elem)}: {last_elem}")
+    r_last = -1
+    c_last = -1
+    if current_word_tiles:
+        last_elem = current_word_tiles[-1]
+        if isinstance(last_elem, (list, tuple)) and len(last_elem) == 5:
+            r_last_py, c_last_py, _ign1, _ign2, _ign3 = last_elem
+            r_last = <int>r_last_py
+            c_last = <int>c_last_py
+        else:
+            if depth == 0 and not current_word_tiles:
+                 pass
+            else:
+                 raise TypeError(f"Expected 5-tuple at end of current_word_tiles, got {type(last_elem)}: {last_elem}")
 
-
-    # --- Check if current path forms a valid move ---
     if gaddag_node.is_terminal and not is_reversed:
         newly_placed_list_details = []
         for r_lp, c_lp, l_lp, _, is_new_lp in current_word_tiles:
@@ -622,16 +397,13 @@ def _gaddag_traverse(
                             temp_tiles[r][c] = letter_obj; newly_placed_coords.add((r, c))
                             if is_blank_obj: temp_blanks.add((r, c)); move_blanks_coords.add((r, c))
 
-                # --- MODIFIED CALL: Pass dawg_obj ---
                 is_valid, is_bingo = is_valid_play(newly_placed_list_details, temp_tiles, is_first_play, full_rack_size, original_tiles_state, None, dawg_obj)
-                # --- END MODIFICATION ---
 
                 if is_valid:
                     unique_move_signatures.add(new_tiles_sig)
                     score = calculate_score(newly_placed_list_details, board, temp_tiles, temp_blanks)
                     all_words_formed_details = find_all_words_formed(newly_placed_list_details, temp_tiles)
 
-                    # ... (rest of primary word finding, formatting, leave calc - unchanged) ...
                     primary_word_tiles = []; primary_word_str = ""; start_pos = (0, 0); orientation = current_axis
                     orientation_coord = "right" if current_axis == 'H' else "down"
                     if all_words_formed_details:
@@ -656,14 +428,12 @@ def _gaddag_traverse(
 
                          if primary_word_tiles:
                              primary_word_str = "".join(t[2] for t in primary_word_tiles)
-                             # Determine start_pos based on orientation and min row/col
                              if orientation == 'H':
                                  start_pos = min(primary_word_tiles, key=lambda x: x[1])[:2]
                              elif orientation == 'V':
                                  start_pos = min(primary_word_tiles, key=lambda x: x[0])[:2]
-                             else: # Fallback if orientation unclear
+                             else:
                                  start_pos = primary_word_tiles[0][:2]
-
 
                     word_with_blanks_list = []
                     for wr, wc, w_letter in primary_word_tiles:
@@ -684,30 +454,32 @@ def _gaddag_traverse(
                     }
                     all_found_moves.append(move_details_dict)
 
-    # --- Explore Next Steps ---
     current_rack_counts_c = rack_counts_c
     blank_idx = 26
 
-    for letter, next_node in gaddag_node.children.items():
+    children_dict = getattr(gaddag_node, 'children', {})
+    if not isinstance(children_dict, dict):
+         children_dict = {}
+
+    for letter, next_node in children_dict.items():
         if letter == Gaddag.SEPARATOR:
             if is_reversed:
-                # --- MODIFIED CALL: Pass dawg_obj ---
                 _gaddag_traverse(
                     anchor_pos, current_rack_counts_c, tiles, board, blanks, cross_check_sets,
                     next_node,
-                    gaddag_root_node, # Pass the root node through
-                    current_word_tiles, False, current_axis, # Pass same list
+                    gaddag_root_node,
+                    current_word_tiles, False, current_axis,
                     all_found_moves, unique_move_signatures, original_tiles_state,
-                    is_first_play, full_rack_size, dawg_obj, max_len, depth + 1 # Pass dawg_obj
+                    is_first_play, full_rack_size, dawg_obj, max_len, depth + 1
                 )
-                # --- END MODIFICATION ---
             continue
 
-        # ... (coordinate calculation logic - unchanged) ...
         next_r, next_c = -1, -1
         if is_reversed:
-            if current_axis == 'H': next_r, next_c = r_last, c_last - 1
-            else:                   next_r, next_c = r_last - 1, c_last
+            if current_word_tiles:
+                 if current_axis == 'H': next_r, next_c = r_last, c_last - 1
+                 else:                   next_r, next_c = r_last - 1, c_last
+            else: continue
         else:
             anchor_r_obj, anchor_c_obj = anchor_pos
             anchor_r = <int>anchor_r_obj
@@ -722,6 +494,9 @@ def _gaddag_traverse(
                     if c_last <= anchor_c: just_crossed_separator = True
                 else:
                     if r_last <= anchor_r: just_crossed_separator = True
+            else:
+                 just_crossed_separator = True
+
             ref_r = anchor_r if just_crossed_separator else r_last
             ref_c = anchor_c if just_crossed_separator else c_last
             if current_axis == 'H': next_r, next_c = ref_r, ref_c + 1
@@ -739,91 +514,54 @@ def _gaddag_traverse(
             letter_idx = get_char_index(letter)
             if letter_idx == -1: continue
 
-            # Option 1a: Use regular tile
             if current_rack_counts_c[letter_idx] > 0 and letter in allowed_letters:
                 for i in range(27): temp_rack_counts_c_arr[i] = current_rack_counts_c[i]
                 temp_rack_counts_c_arr[letter_idx] -= 1
                 next_rack_np_arr = np.array(temp_rack_counts_c_arr, dtype=np.intc)
-                # --- MODIFIED CALL: Pass dawg_obj ---
                 _gaddag_traverse(
                     anchor_pos, next_rack_np_arr, tiles, board, blanks, cross_check_sets,
                     next_node,
-                    gaddag_root_node, # Pass the root node through
+                    gaddag_root_node,
                     current_word_tiles + [(next_r, next_c, letter, <bint>False, <bint>True)],
                     is_reversed, current_axis, all_found_moves, unique_move_signatures,
-                    original_tiles_state, is_first_play, full_rack_size, dawg_obj, max_len, depth + 1 # Pass dawg_obj
+                    original_tiles_state, is_first_play, full_rack_size, dawg_obj, max_len, depth + 1
                 )
-                # --- END MODIFICATION ---
 
-            # Option 1b: Use blank tile
             if current_rack_counts_c[blank_idx] > 0 and ' ' in allowed_letters:
                 for i in range(27): temp_rack_counts_c_arr[i] = current_rack_counts_c[i]
                 temp_rack_counts_c_arr[blank_idx] -= 1
                 next_rack_np_arr = np.array(temp_rack_counts_c_arr, dtype=np.intc)
-                # --- MODIFIED CALL: Pass dawg_obj ---
                 _gaddag_traverse(
                     anchor_pos, next_rack_np_arr, tiles, board, blanks, cross_check_sets,
                     next_node,
-                    gaddag_root_node, # Pass the root node through
+                    gaddag_root_node,
                     current_word_tiles + [(next_r, next_c, letter, <bint>True, <bint>True)],
                     is_reversed, current_axis, all_found_moves, unique_move_signatures,
-                    original_tiles_state, is_first_play, full_rack_size, dawg_obj, max_len, depth + 1 # Pass dawg_obj
+                    original_tiles_state, is_first_play, full_rack_size, dawg_obj, max_len, depth + 1
                 )
-                # --- END MODIFICATION ---
-        # Case 2: Square has matching existing tile
         elif existing_tile == letter:
-            # --- MODIFIED CALL: Pass dawg_obj ---
             _gaddag_traverse(
                 anchor_pos, current_rack_counts_c, tiles, board, blanks, cross_check_sets,
                 next_node,
-                gaddag_root_node, # Pass the root node through
+                gaddag_root_node,
                 current_word_tiles + [(next_r, next_c, letter, <bint>False, <bint>False)],
                 is_reversed, current_axis, all_found_moves, unique_move_signatures,
-                original_tiles_state, is_first_play, full_rack_size, dawg_obj, max_len, depth + 1 # Pass dawg_obj
+                original_tiles_state, is_first_play, full_rack_size, dawg_obj, max_len, depth + 1
             )
-            # --- END MODIFICATION ---
-
-
-
-
-
-
-
-##########################################################################################################
-##########################################################################################################
-##########################################################################################################
-
-
-
-
-
 
 
 # --- compute_cross_checks_cython ---
-# (Defined AFTER _gaddag_traverse)
 cpdef dict compute_cross_checks_cython(list tiles, object dawg_obj):
-    """
-    Computes the cross-check sets for empty squares on the board using Cython.
-
-    Args:
-        tiles (list): The current board state (list of lists).
-        dawg_obj (object): The DAWG object for dictionary lookups.
-
-    Returns:
-        dict: The cross_check_sets dictionary.
-    """
-    # --- Declare C types for performance ---
     cdef int r, c, rr, cc
     cdef str up_word, down_word, left_word, right_word, letter, full_word_v, full_word_h
     cdef set allowed_letters_v, allowed_letters_h
     cdef dict cross_check_sets = {}
-    cdef bint search_result # For DAWG search result
+    cdef bint search_result
+    cdef int letter_ord
 
-    # --- Use GRID_SIZE_C for loops ---
     for r in range(GRID_SIZE_C):
         for c in range(GRID_SIZE_C):
-            if not tiles[r][c]: # Only process empty squares
-                # Vertical check
+            if not tiles[r][c]:
                 up_word = ""
                 rr = r - 1
                 while rr >= 0 and tiles[rr][c]:
@@ -837,7 +575,7 @@ cpdef dict compute_cross_checks_cython(list tiles, object dawg_obj):
 
                 allowed_letters_v = set()
                 if not up_word and not down_word:
-                    allowed_letters_v = set('ABCDEFGHIJKLMNOPQRSTUVWXYZ ') # Include blank
+                    allowed_letters_v = set('ABCDEFGHIJKLMNOPQRSTUVWXYZ ')
                 else:
                     for letter_ord in range(ord('A'), ord('Z') + 1):
                         letter = chr(letter_ord)
@@ -848,7 +586,6 @@ cpdef dict compute_cross_checks_cython(list tiles, object dawg_obj):
                     if allowed_letters_v:
                         allowed_letters_v.add(' ')
 
-                # Horizontal check
                 left_word = ""
                 cc = c - 1
                 while cc >= 0 and tiles[r][cc]:
@@ -862,7 +599,7 @@ cpdef dict compute_cross_checks_cython(list tiles, object dawg_obj):
 
                 allowed_letters_h = set()
                 if not left_word and not right_word:
-                    allowed_letters_h = set('ABCDEFGHIJKLMNOPQRSTUVWXYZ ') # Include blank
+                    allowed_letters_h = set('ABCDEFGHIJKLMNOPQRSTUVWXYZ ')
                 else:
                     for letter_ord in range(ord('A'), ord('Z') + 1):
                         letter = chr(letter_ord)
@@ -876,3 +613,219 @@ cpdef dict compute_cross_checks_cython(list tiles, object dawg_obj):
                 cross_check_sets[(r, c)] = {'V': allowed_letters_v, 'H': allowed_letters_h}
 
     return cross_check_sets
+
+
+# --- evaluate_leave_cython ---
+cpdef float evaluate_leave_cython(list rack, bint verbose=False):
+    cdef int num_tiles = len(rack)
+    cdef list rack_with_question_marks
+    cdef str leave_key, tile
+    cdef float leave_float = 0.0
+
+    if num_tiles == 0:
+        return 0.0
+    if num_tiles > 6:
+        return 0.0
+
+    rack_with_question_marks = ['?' if tile == ' ' else tile for tile in rack]
+    leave_key = "".join(sorted(rack_with_question_marks))
+
+    try:
+        leave_float = perform_leave_lookup(leave_key)
+        return leave_float
+    except Exception as e:
+        print(f"Error (Cython) generating key or calling Python lookup for rack '{rack}': {e}")
+        return 0.0
+
+
+# --- Helper function for sorting (used by generate_all_moves_gaddag_cython) ---
+def _get_move_score_for_sort(move_dict):
+    """Helper to safely get score for sorting, defaulting to -1."""
+    if isinstance(move_dict, dict):
+        return move_dict.get('score', -1) # Default to -1 if score key missing
+    return -1 # Return -1 for non-dict items
+
+
+
+
+
+
+
+
+
+def generate_all_moves_gaddag_cython( # Changed from cpdef list
+# --- END MODIFICATION ---
+    object rack, # Keep as object
+    object tiles,
+    object board,
+    object blanks,
+    object gaddag_root,
+    object dawg_obj
+):
+    """
+    Generates ALL valid Scrabble moves using GADDAG traversal.
+    Consolidated version performing setup, core logic, and post-processing in Cython.
+    Defined as 'def' to bypass cpdef closure error.
+    """
+    # --- Type Declarations ---
+    cdef list all_found_moves = []
+    cdef set unique_move_signatures = set()
+    cdef bint is_first_play
+    cdef set anchors
+    cdef list original_tiles_state
+    cdef int full_rack_size, i
+    cdef object rack_counts_py
+    cdef object rack_counts_c_arr
+    cdef dict cross_check_sets
+    # --- MODIFICATION: Ensure processed_adjacent_starts is declared ---
+    cdef set processed_adjacent_starts = set()
+    # --- END MODIFICATION ---
+    cdef tuple anchor_pos, adj_pos
+    cdef int r_anchor, c_anchor, dr, dc, nr, nc
+    cdef object allowed_h_obj, allowed_v_obj
+    cdef set allowed_h, allowed_v
+    cdef str tile_letter, existing_tile_letter, assigned_letter, start_axis
+    cdef int count, letter_idx_s1, blank_idx
+    cdef object next_node_obj
+    cdef object next_node
+    cdef list initial_tiles
+    cdef object next_rack_counts_c_arr_s1, next_rack_counts_c_arr_blank
+    cdef object initial_rack_counts_c_copy
+    cdef object anchor_r_obj, anchor_c_obj
+    cdef int assigned_letter_ord
+    cdef list final_unique_moves = []
+    cdef set seen_final_signatures = set()
+    cdef dict move
+    cdef list sig_details, sig_tuple_list
+    cdef tuple sig_tuple, item
+    cdef bint valid_sig
+
+    # --- Setup Phase ---
+    if gaddag_root is None or dawg_obj is None:
+         print("ERROR (Cython): GADDAG root or DAWG object is None in generate_all_moves.")
+         return []
+
+    # Cast arguments back to expected types for internal use
+    cdef list py_tiles = <list>tiles
+    cdef list py_rack = <list>rack
+    cdef list py_board = <list>board # Cast board if needed by helpers
+    cdef set py_blanks = <set>blanks # Cast blanks
+
+    is_first_play = sum(1 for row in py_tiles for t in row if t) == 0
+    anchors = get_anchor_points(py_tiles, is_first_play) # Call Python helper
+    original_tiles_state = [row[:] for row in py_tiles]
+    full_rack_size = len(py_rack)
+
+    rack_counts_py = Counter(py_rack)
+    rack_counts_c_arr = np.zeros(27, dtype=np.intc)
+    for i in range(26):
+        letter = chr(ord('A') + i)
+        # --- MODIFICATION: Remove <Counter> cast ---
+        rack_counts_c_arr[i] = rack_counts_py.get(letter, 0)
+        # --- END MODIFICATION ---
+    # --- MODIFICATION: Remove <Counter> cast ---
+    rack_counts_c_arr[26] = rack_counts_py.get(' ', 0)
+    # --- END MODIFICATION ---
+
+    cross_check_sets = compute_cross_checks_cython(py_tiles, dawg_obj)
+
+    # --- Core Logic Phase (Anchor Processing) ---
+    initial_rack_counts_c_copy = rack_counts_c_arr.copy()
+    blank_idx = 26
+
+    for anchor_pos in anchors:
+        if isinstance(anchor_pos, tuple) and len(anchor_pos) == 2:
+            anchor_r_obj, anchor_c_obj = anchor_pos
+            r_anchor = <int>anchor_r_obj
+            c_anchor = <int>anchor_c_obj
+        else:
+            continue
+
+        allowed_h_obj = cross_check_sets.get(anchor_pos, {}).get('H', set())
+        allowed_v_obj = cross_check_sets.get(anchor_pos, {}).get('V', set())
+        allowed_h = <set>allowed_h_obj if isinstance(allowed_h_obj, set) else set()
+        allowed_v = <set>allowed_v_obj if isinstance(allowed_v_obj, set) else set()
+
+        # Strategy 1
+        for tile_letter, count in (<dict>rack_counts_py).items():
+            if count > 0 and tile_letter != ' ':
+                next_node_obj = getattr(gaddag_root, 'children', {}).get(tile_letter)
+                if next_node_obj is not None:
+                    next_node = next_node_obj
+                    next_rack_counts_c_arr_s1 = rack_counts_c_arr.copy()
+                    letter_idx_s1 = ord(tile_letter) - ord('A')
+                    if 0 <= letter_idx_s1 < 26:
+                        next_rack_counts_c_arr_s1[letter_idx_s1] -= 1
+                    else:
+                        continue
+                    initial_tiles = [(r_anchor, c_anchor, tile_letter, <bint>False, <bint>True)]
+                    if tile_letter in allowed_v:
+                         _gaddag_traverse(anchor_pos, next_rack_counts_c_arr_s1, py_tiles, py_board, py_blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'H', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size, dawg_obj)
+                    if tile_letter in allowed_h:
+                         _gaddag_traverse(anchor_pos, next_rack_counts_c_arr_s1, py_tiles, py_board, py_blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'V', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size, dawg_obj)
+
+        # Handle blank for Strategy 1
+        if (<dict>rack_counts_py).get(' ', 0) > 0:
+            if ' ' in allowed_h or ' ' in allowed_v:
+                next_rack_counts_c_arr_blank = rack_counts_c_arr.copy()
+                next_rack_counts_c_arr_blank[blank_idx] -= 1
+                for assigned_letter_ord in range(ord('A'), ord('Z') + 1):
+                    assigned_letter = chr(assigned_letter_ord)
+                    next_node_obj = getattr(gaddag_root, 'children', {}).get(assigned_letter)
+                    if next_node_obj is not None:
+                        next_node = next_node_obj
+                        initial_tiles = [(r_anchor, c_anchor, assigned_letter, <bint>True, <bint>True)]
+                        if ' ' in allowed_v:
+                            _gaddag_traverse(anchor_pos, next_rack_counts_c_arr_blank.copy(), py_tiles, py_board, py_blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'H', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size, dawg_obj)
+                        if ' ' in allowed_h:
+                            _gaddag_traverse(anchor_pos, next_rack_counts_c_arr_blank.copy(), py_tiles, py_board, py_blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, 'V', all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size, dawg_obj)
+
+        # Strategy 2
+        if not is_first_play:
+            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nr = r_anchor + dr
+                nc = c_anchor + dc
+                adj_pos = (nr, nc)
+                if 0 <= nr < GRID_SIZE_C and 0 <= nc < GRID_SIZE_C:
+                    existing_tile_letter = py_tiles[nr][nc] # Use cast variable
+                    if existing_tile_letter and adj_pos not in processed_adjacent_starts:
+                         processed_adjacent_starts.add(adj_pos) # Use cdef variable
+                         next_node_obj = getattr(gaddag_root, 'children', {}).get(existing_tile_letter)
+                         if next_node_obj is not None:
+                            next_node = next_node_obj
+                            initial_tiles = [(nr, nc, existing_tile_letter, <bint>False, <bint>False)]
+                            start_axis = 'V' if dr != 0 else 'H'
+                            _gaddag_traverse(anchor_pos, initial_rack_counts_c_copy, py_tiles, py_board, py_blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), False, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size, dawg_obj)
+                            _gaddag_traverse(anchor_pos, initial_rack_counts_c_copy, py_tiles, py_board, py_blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size, dawg_obj)
+
+    # --- Post-processing Phase ---
+    all_found_moves.sort(key=_get_move_score_for_sort, reverse=True)
+
+    final_unique_moves = []
+    seen_final_signatures = set()
+    for move in all_found_moves:
+        sig_details = move.get('newly_placed')
+        if sig_details is None:
+             sig_details = move.get('positions', [])
+        try:
+            sig_tuple_list = []
+            valid_sig = True
+            if not isinstance(sig_details, (list, tuple)):
+                 valid_sig = False
+            else:
+                for item in sig_details:
+                    if isinstance(item, (list, tuple)) and len(item) >= 3:
+                        sig_tuple_list.append(tuple(item[:3]))
+                    else:
+                        valid_sig = False
+                        break
+            if not valid_sig:
+                continue
+            sig_tuple = tuple(sorted(sig_tuple_list)) + (move.get('score', 0),)
+        except TypeError as e:
+             continue
+        if sig_tuple not in seen_final_signatures:
+            final_unique_moves.append(move)
+            seen_final_signatures.add(sig_tuple)
+
+    return final_unique_moves
