@@ -68,6 +68,45 @@ cdef list find_cross_word(tuple tile, list tiles, str main_orientation):
 
     return cross_word if len(cross_word) > 1 else []
 
+
+
+cpdef float evaluate_single_move_cython(dict move_dict):
+    """
+    Cython version: Combines immediate score and leave value.
+    Calls evaluate_leave_cython directly.
+    """
+    cdef float immediate_score = 0.0
+    cdef list leave = []
+    cdef float leave_score_adjustment = 0.0
+    cdef float combined_score = 0.0
+    cdef object leave_obj # Use object to handle potential non-list type from dict.get
+
+    # Use .get with default values for safety
+    # Ensure score is treated as float
+    immediate_score = float(move_dict.get('score', 0.0))
+
+    leave_obj = move_dict.get('leave', []) # Get the 'leave' item
+    # Check if the retrieved item is actually a list
+    if isinstance(leave_obj, list):
+        leave = <list>leave_obj # Cast to list if it is one
+    else:
+        # Handle cases where 'leave' might not be a list (e.g., None or other type)
+        # You could print a warning here if needed:
+        # print(f"Warning: 'leave' in move_dict is not a list, type: {type(leave_obj)}")
+        leave = [] # Default to an empty list
+
+    # Call the existing Cython leave evaluation function (defined in this file)
+    leave_score_adjustment = evaluate_leave_cython(leave)
+
+    combined_score = immediate_score + leave_score_adjustment
+    return combined_score
+
+
+
+
+
+
+
 # --- find_main_word ---
 cdef tuple find_main_word(list new_tiles, list tiles):
     cdef int row, col, min_row, max_row, min_col, max_col, r_nt, c_nt, c_mw, r_mw
@@ -125,6 +164,13 @@ cdef tuple find_main_word(list new_tiles, list tiles):
         return (main_word, orientation) if len(main_word) > 1 else ([], None)
     else: return [], None
 
+
+
+
+
+
+
+
 # --- find_all_words_formed ---
 cpdef list find_all_words_formed(list new_tiles, list tiles):
     cdef list words = []
@@ -169,6 +215,14 @@ cpdef list find_all_words_formed(list new_tiles, list tiles):
 
     return unique_word_tile_lists
 
+
+
+
+
+
+
+
+
 # --- calculate_score ---
 cpdef int calculate_score(list new_tiles, list board, list tiles, set blanks):
     cdef int total_score = 0, word_score, word_multiplier
@@ -201,6 +255,184 @@ cpdef int calculate_score(list new_tiles, list board, list tiles, set blanks):
 
     if len(new_tiles) == 7: total_score += 50
     return total_score
+
+
+
+
+
+def get_final_score_for_sort(eval_dict):
+    """Helper function to extract 'final_score' for sorting."""
+    # Add error handling in case the key is missing or value is not numeric
+    try:
+        # Attempt to get the score, default to negative infinity if missing
+        score = eval_dict.get('final_score', -float('inf'))
+        # Ensure it's a float before returning
+        return float(score)
+    except (TypeError, ValueError):
+        # Handle cases where 'final_score' exists but isn't a number
+        return -float('inf') # Return a value that sorts to the end
+
+
+
+
+
+
+
+
+
+@cython.locals(move=dict, evaluated_score=float) # Optional type hints for performance
+cpdef list standard_evaluation_cython(list all_moves):
+    """
+    Performs standard evaluation (raw score + leave) on a list of moves.
+    Calls evaluate_single_move_cython.
+    Returns a list of dictionaries [{'move': move_dict, 'final_score': float}],
+    sorted by final_score descending.
+    """
+    cdef list temp_evaluated_plays = []
+    cdef dict eval_dict
+    cdef float best_play_evaluation = -float('inf') # Not strictly needed for return, but useful if optimizing further
+
+    if all_moves is None: # Handle None input
+        return []
+
+    for move in all_moves:
+        # Ensure move is a dictionary before processing
+        if not isinstance(move, dict):
+            # print(f"Warning: Item in all_moves is not a dict: {type(move)}") # Optional warning
+            continue
+
+        # Call the Cython function to get combined score + leave
+        evaluated_score = evaluate_single_move_cython(move)
+
+        # Create the dictionary structure expected by the Python code
+        eval_dict = {'move': move, 'final_score': evaluated_score}
+        temp_evaluated_plays.append(eval_dict)
+
+        # Keep track of best score (optional, might be removed if only sorting matters)
+        if evaluated_score > best_play_evaluation:
+            best_play_evaluation = evaluated_score
+
+    # Sort the results based on 'final_score' descending
+    # The key for sorting needs to be accessible from Python later,
+    # so using a simple lambda here is fine, or define a helper if needed.
+    # Python's sort is efficient even when called from Cython on Python list objects.
+    temp_evaluated_plays.sort(key=get_final_score_for_sort, reverse=True)
+
+    return temp_evaluated_plays
+
+
+
+
+
+
+
+@cython.locals(best_play_raw_score=float, current_play_eval=float)
+cpdef tuple ai_turn_logic_cython(
+    list all_moves,
+    list current_rack,
+    object board_tile_counts_obj, # Pass Counter as object
+    int blanks_played_count,
+    int bag_count,
+    object get_remaining_tiles_func, # Pass Python function as object
+    object find_best_exchange_option_func, # Pass Python function as object
+    float EXCHANGE_PREFERENCE_THRESHOLD,
+    float MIN_SCORE_TO_AVOID_EXCHANGE
+    ):
+    """
+    Performs standard evaluation and decides between play, exchange, or pass.
+    Calls standard_evaluation_cython and Python helper functions passed as arguments.
+    Passes board_tile_counts and blanks_played_count to find_best_exchange_option_func.
+
+    Returns:
+        tuple: (action_chosen_str, best_move_data)
+               where best_move_data is either the best move dict or the list of tiles to exchange.
+               Returns ('pass', None) if no action is chosen.
+    """
+    cdef list evaluated_play_options = []
+    cdef dict best_play_move = None
+    cdef float best_play_evaluation = -float('inf')
+    cdef list best_exchange_tiles = []
+    cdef float best_exchange_evaluation = -float('inf')
+    cdef bint can_play = False
+    cdef bint can_exchange_proactively = (bag_count >= 1)
+    cdef str action_chosen = 'pass'
+    cdef dict remaining_dict_for_exchange # No longer needed here
+    cdef tuple exchange_result
+
+    # --- Evaluate Play Options ---
+    can_play = bool(all_moves)
+    if can_play:
+        evaluated_play_options = standard_evaluation_cython(all_moves)
+        if evaluated_play_options:
+            best_play_evaluation = evaluated_play_options[0]['final_score']
+            best_play_move = evaluated_play_options[0]['move']
+        else:
+            can_play = False
+            best_play_move = None
+            best_play_evaluation = -float('inf')
+
+    # --- Evaluate Exchange Option ---
+    if not can_play or can_exchange_proactively:
+        try:
+            exchange_result = find_best_exchange_option_func(
+                current_rack,
+                board_tile_counts_obj, # Pass board counts object
+                blanks_played_count,   # Pass blanks played count
+                bag_count
+            )
+
+            if isinstance(exchange_result, tuple) and len(exchange_result) == 2:
+                best_exchange_tiles_obj, best_exchange_evaluation_obj = exchange_result
+                if isinstance(best_exchange_tiles_obj, list):
+                    best_exchange_tiles = best_exchange_tiles_obj
+                try:
+                    best_exchange_evaluation = float(best_exchange_evaluation_obj)
+                except (TypeError, ValueError):
+                    best_exchange_evaluation = -float('inf')
+            else:
+                 print("Warning: find_best_exchange_option returned unexpected type.")
+                 best_exchange_tiles = []
+                 best_exchange_evaluation = -float('inf')
+
+        except Exception as e:
+            print(f"Error calling Python helper function find_best_exchange_option from Cython: {e}")
+            best_exchange_tiles = []
+            best_exchange_evaluation = -float('inf')
+
+
+    # --- Final Decision Logic ---
+    if can_play and best_play_move is not None:
+        best_play_raw_score = float(best_play_move.get('score', 0.0))
+
+        if best_play_raw_score >= MIN_SCORE_TO_AVOID_EXCHANGE:
+            action_chosen = 'play'
+        else:
+            action_chosen = 'play'
+            if best_exchange_tiles:
+                current_play_eval = best_play_evaluation
+                if best_exchange_evaluation > current_play_eval + EXCHANGE_PREFERENCE_THRESHOLD:
+                    action_chosen = 'exchange'
+    elif best_exchange_tiles:
+         action_chosen = 'exchange'
+    else:
+        action_chosen = 'pass'
+
+    # --- Return chosen action and relevant data ---
+    if action_chosen == 'play':
+        return (action_chosen, best_play_move)
+    elif action_chosen == 'exchange':
+        return (action_chosen, best_exchange_tiles)
+    else: # Pass
+        return (action_chosen, None)
+
+
+
+
+
+
+
+
+
 
 # --- is_valid_play ---
 cpdef tuple is_valid_play(list word_positions, list tiles, bint is_first_play, int initial_rack_size, list original_tiles, object rack, object dawg_obj):
@@ -318,7 +550,12 @@ cpdef tuple is_valid_play(list word_positions, list tiles, bint is_first_play, i
     return True, is_bingo
 
 
-# --- _gaddag_traverse ---
+
+
+
+
+
+
 def _gaddag_traverse(
     anchor_pos,
     int[:] rack_counts_c,
@@ -549,6 +786,11 @@ def _gaddag_traverse(
             )
 
 
+
+
+
+
+
 # --- compute_cross_checks_cython ---
 cpdef dict compute_cross_checks_cython(list tiles, object dawg_obj):
     # ... (function body unchanged) ...
@@ -615,6 +857,11 @@ cpdef dict compute_cross_checks_cython(list tiles, object dawg_obj):
     return cross_check_sets
 
 
+
+
+
+
+
 # --- evaluate_leave_cython ---
 cpdef float evaluate_leave_cython(list rack, bint verbose=False):
     # ... (function body unchanged) ...
@@ -639,6 +886,138 @@ cpdef float evaluate_leave_cython(list rack, bint verbose=False):
         return 0.0
 
 
+
+
+
+
+cpdef float calculate_luck_factor_cython(
+    list drawn_tiles,
+    list move_rack_before,
+    object board_tile_counts_obj, # Pass Counter as object
+    int blanks_played_count,
+    object get_remaining_tiles_func # Pass Python function as object
+    ):
+    """
+    Calculates the luck factor for a set of drawn tiles.
+    Calls evaluate_leave_cython and replicates analyze_unseen_pool logic.
+    Calls the passed Python get_remaining_tiles function.
+    """
+    # These are declared with cdef
+    cdef float drawn_leave_value = 0.0
+    cdef dict remaining_dict
+    cdef float expected_value_sum = 0.0
+    cdef int total_unseen_tiles = 0
+    cdef float probability = 0.0
+    cdef float single_tile_value = 0.0
+    cdef float expected_single_draw_value = 0.0
+    cdef float expected_draw_value_total = 0.0
+    cdef float luck_factor = 0.0
+    # Loop variables declared with cdef
+    cdef str tile
+    cdef int count
+
+    if not drawn_tiles:
+        return 0.0 # No luck factor if no tiles were drawn
+
+    # 1. Calculate the actual leave value of the drawn tiles
+    drawn_leave_value = evaluate_leave_cython(drawn_tiles)
+
+    # 2. Calculate the expected leave value before the draw
+    try:
+        # Call the passed Python function to get remaining tiles before draw
+        remaining_dict = get_remaining_tiles_func(move_rack_before, board_tile_counts_obj, blanks_played_count)
+
+        # Replicate analyze_unseen_pool logic here
+        total_unseen_tiles = sum(remaining_dict.values())
+        expected_value_sum = 0.0
+
+        if total_unseen_tiles > 0:
+            # Iterate through the remaining tiles dictionary
+            for tile, count in remaining_dict.items(): # Use cdef'd tile and count
+                if count <= 0:
+                    continue
+                if not isinstance(tile, str):
+                    continue
+
+                # Get single tile leave value using evaluate_leave_cython
+                try:
+                    single_tile_value = evaluate_leave_cython([tile])
+                except Exception as e_eval:
+                    # print(f"Warning (Cython luck): Could not evaluate single tile '{tile}': {e_eval}")
+                    single_tile_value = 0.0
+
+                probability = <float>count / total_unseen_tiles
+                expected_value_sum += single_tile_value * probability
+
+        expected_single_draw_value = expected_value_sum
+
+    except Exception as e_pool:
+        print(f"Error calculating expected value in Cython luck factor: {e_pool}")
+        expected_single_draw_value = 0.0
+
+    # 3. Calculate total expected value and luck factor
+    expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
+    luck_factor = drawn_leave_value - expected_draw_value_total
+
+    return luck_factor
+
+
+
+
+
+
+cpdef float get_expected_draw_value_cython(
+    list current_rack,            # Need rack to calculate remaining
+    object board_tile_counts_obj, # Pass Counter as object
+    int blanks_played_count,
+    object get_remaining_tiles_func # Pass Python function as object
+    ):
+    """
+    Calculates the expected value of drawing a single tile from the unseen pool.
+    Calls the passed Python get_remaining_tiles function.
+    Calls evaluate_leave_cython for single tiles.
+    """
+    cdef dict remaining_dict
+    cdef float expected_value_sum = 0.0
+    cdef int total_unseen_tiles = 0
+    cdef float probability = 0.0
+    cdef float single_tile_value = 0.0
+    cdef str tile
+    cdef int count
+
+    try:
+        # Call the passed Python function to get remaining tiles
+        remaining_dict = get_remaining_tiles_func(current_rack, board_tile_counts_obj, blanks_played_count)
+
+        total_unseen_tiles = sum(remaining_dict.values())
+
+        if total_unseen_tiles > 0:
+            for tile, count in remaining_dict.items():
+                if count <= 0:
+                    continue
+                if not isinstance(tile, str):
+                    continue
+                try:
+                    single_tile_value = evaluate_leave_cython([tile])
+                except Exception as e_eval:
+                    # print(f"Warning (Cython expected val): Could not evaluate single tile '{tile}': {e_eval}")
+                    single_tile_value = 0.0
+
+                probability = <float>count / total_unseen_tiles
+                expected_value_sum += single_tile_value * probability
+
+        return expected_value_sum # Return the calculated expected value
+
+    except Exception as e_pool:
+        print(f"Error calculating expected value in Cython: {e_pool}")
+        return 0.0 # Return default on error
+
+
+
+
+
+
+
 # --- Helper function for sorting ---
 def _get_move_score_for_sort(move_dict):
     """Helper to safely get score for sorting, defaulting to -1."""
@@ -647,10 +1026,13 @@ def _get_move_score_for_sort(move_dict):
     return -1
 
 
+
+
+
+
+
 # --- Consolidated Move Generation Function ---
-# --- MODIFICATION: Changed back to def ---
 def generate_all_moves_gaddag_cython(
-# --- END MODIFICATION ---
     object rack, # Keep as object
     object tiles,
     object board,
@@ -721,12 +1103,8 @@ def generate_all_moves_gaddag_cython(
     rack_counts_c_arr = np.zeros(27, dtype=np.intc) # Create NumPy array
     for i in range(26):
         letter = chr(ord('A') + i)
-        # --- MODIFICATION: Remove <Counter> cast ---
         rack_counts_c_arr[i] = rack_counts_py.get(letter, 0)
-        # --- END MODIFICATION ---
-    # --- MODIFICATION: Remove <Counter> cast ---
     rack_counts_c_arr[26] = rack_counts_py.get(' ', 0)
-    # --- END MODIFICATION ---
 
     cross_check_sets = compute_cross_checks_cython(py_tiles, dawg_obj)
 
@@ -799,10 +1177,8 @@ def generate_all_moves_gaddag_cython(
                             _gaddag_traverse(anchor_pos, initial_rack_counts_c_copy, py_tiles, py_board, py_blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), False, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size, dawg_obj)
                             _gaddag_traverse(anchor_pos, initial_rack_counts_c_copy, py_tiles, py_board, py_blanks, cross_check_sets, next_node, gaddag_root, list(initial_tiles), True, start_axis, all_found_moves, unique_move_signatures, original_tiles_state, is_first_play, full_rack_size, dawg_obj)
 
-    # --- Post-processing Phase ---
-    # --- MODIFICATION: Use helper function for sort key ---
+  
     all_found_moves.sort(key=_get_move_score_for_sort, reverse=True)
-    # --- END MODIFICATION ---
 
     final_unique_moves = []
     seen_final_signatures = set()
