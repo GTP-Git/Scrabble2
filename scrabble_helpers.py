@@ -111,17 +111,7 @@ try:
             LEAVE_LOOKUP_TABLE = {}
         elif not LEAVE_LOOKUP_TABLE:
              print(f"--- WARNING: Loaded leave lookup table from {lookup_file} is empty. ---")
-        # <<< --- ADDED DEBUG PRINTS --- >>>
-        else:
-            print(f"--- DEBUG: LEAVE_LOOKUP_TABLE loaded. Type: {type(LEAVE_LOOKUP_TABLE)}, Size: {len(LEAVE_LOOKUP_TABLE)}")
-            # Print a few sample entries if the table is not too large or sensitive
-            sample_keys = ['ER', 'EN', 'EE', 'S', 'ES', '?'] # Example keys
-            for key in sample_keys:
-                if key in LEAVE_LOOKUP_TABLE:
-                    print(f"    Sample Key '{key}': Value = {LEAVE_LOOKUP_TABLE[key]} (Type: {type(LEAVE_LOOKUP_TABLE[key])})")
-                else:
-                    print(f"    Sample Key '{key}': NOT FOUND")
-        # <<< --- END ADDED DEBUG PRINTS --- >>>
+        
 
     else:
         print(f"--- WARNING: Leave Lookup Table file not found: {lookup_file} ---")
