@@ -4,8 +4,6 @@ To-Do List
 
 -- When a game is loaded, the move replay is accurate, but the racks are simply simulated guesses, and do not reflect the actual racks. Because the Options button doesn't work in Replay mode because it conflicts with the replay controls, the user can't specify a rack to match the acutal game, if known.
 
--- In 8-Letter Bingo mode, Play Again should play again without bringing up the Probability dialog. This interrupts the practice flow.
-
 -- In Replay mode, like Woogles does, show the best move that was available, the move the human played, the equity difference, and the running and total equity lost/gained.
 
 -- Need a way for the user to stop batch games and AI simulation process. Maybe add button to this effect. Need listeners for it.
@@ -14,9 +12,9 @@ To-Do List
 
 -- Can the AI figure out how to make set-up plays?
 
--- I think the code may already be there, but design a Save format that allows the full game to be recreated, racks and all.
+-- When using Score Preview, once a full word is played (how does it know??), the score disappears from the preview.
 
--- Remove ALL debug print in batch mode.
+-- I think the code may already be there, but design a Save format that allows the full game to be recreated, racks and all.
 
 -- In Replay Mode, limit the Option menu to Main (anything else?) and relocate it in this mode so that it's functional.
 
@@ -181,6 +179,10 @@ ________________________________________________
 -- Disable debug print for moves during Batch. No one is watching the batch, so no need to slow things down with printing
 
 -- Figure out how leave evaluation is done. Should we multiply the static value of a letter with it's probability of being drawn? And what about incorporating 2-leave synergies, with their corresponding probability of being drawn?
+
+-- In 8-Letter Bingo mode, Play Again should play again without bringing up the Probability dialog. This interrupts the practice flow.
+
+-- Remove ALL debug print in batch mode.
 
 
 
