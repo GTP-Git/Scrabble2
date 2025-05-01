@@ -76,18 +76,25 @@ try:
     from gaddag_cython import find_all_words_formed as find_all_words_formed_cython
     from gaddag_cython import compute_cross_checks_cython
     from gaddag_cython import evaluate_leave_cython
-    # --- MODIFICATION: Import new function, remove helper ---
     from gaddag_cython import generate_all_moves_gaddag_cython
-    # REMOVED: from gaddag_cython import _process_anchors_cython
-    # --- END MODIFICATION ---
+    from gaddag_cython import evaluate_single_move_cython
+    from gaddag_cython import standard_evaluation_cython
+    from gaddag_cython import ai_turn_logic_cython
+    from gaddag_cython import calculate_luck_factor_cython
+    from gaddag_cython import get_expected_draw_value_cython
+
     print("--- SUCCESS: Imported ALL Cython functions. ---")
+
     USE_CYTHON_GADDAG = True
     USE_CYTHON_CROSS_CHECKS = True
     USE_CYTHON_EVALUATE_LEAVE = True
-    # --- MODIFICATION: Update flag name ---
     USE_CYTHON_MOVE_GENERATION = True # Use a more descriptive name
-    # REMOVED: USE_CYTHON_ANCHOR_PROCESSING = True
-    # --- END MODIFICATION ---
+    USE_CYTHON_EVALUATE_SINGLE_MOVE = True
+    USE_CYTHON_STANDARD_EVALUATION = True
+    USE_CYTHON_AI_TURN_LOGIC = True
+    USE_CYTHON_LUCK_FACTOR = True
+    USE_CYTHON_EXPECTED_DRAW = True
+    
 
     # --- Add explicit check for all imported functions ---
     print(f"    _gaddag_traverse_cython: {repr(_gaddag_traverse_cython)}")
@@ -96,11 +103,13 @@ try:
     print(f"    find_all_words_formed_cython: {repr(find_all_words_formed_cython)}")
     print(f"    compute_cross_checks_cython: {repr(compute_cross_checks_cython)}")
     print(f"    evaluate_leave_cython: {repr(evaluate_leave_cython)}")
-    # --- MODIFICATION: Check new function ---
     print(f"    generate_all_moves_gaddag_cython: {repr(generate_all_moves_gaddag_cython)}")
-    # REMOVED: print(f"    _process_anchors_cython: {repr(_process_anchors_cython)}")
-    # --- END MODIFICATION ---
-    # --- End explicit check ---
+    print(f"    evaluate_single_move_cython: {repr(evaluate_single_move_cython)}")
+    print(f"    standard_evaluation_cython: {repr(standard_evaluation_cython)}")
+    print(f"    ai_turn_logic_cython: {repr(ai_turn_logic_cython)}")
+    print(f"    calculate_luck_factor_cython: {repr(calculate_luck_factor_cython)}")
+    print(f"    get_expected_draw_value_cython: {repr(get_expected_draw_value_cython)}")
+    
 
 except ImportError as e:
     print(f"--- FAILURE: Cython import failed: {e} ---")
@@ -118,12 +127,41 @@ except ImportError as e:
     def evaluate_leave_dummy(rack, verbose=False): # Corrected dummy signature
         print("!!! Using dummy evaluate_leave - returning 0.0 !!!")
         return 0.0
-    # --- MODIFICATION: Add dummy for new function, remove helper dummy ---
     def generate_all_moves_gaddag_dummy(*args, **kwargs):
         print("!!! Using dummy generate_all_moves_gaddag - returning empty list !!!")
         return []
-    # REMOVED: def _process_anchors_dummy(...): ...
-    # --- END MODIFICATION ---
+    def evaluate_single_move_dummy(move_dict):
+        print("!!! Using dummy evaluate_single_move - returning raw score !!!")
+        # Fallback logic: just return the raw score if leave eval fails
+        return float(move_dict.get('score', 0.0))
+    def standard_evaluation_dummy(all_moves):
+        print("!!! Using dummy standard_evaluation - returning raw scores !!!")
+        if all_moves is None: return []
+        temp_evaluated_plays = []
+        for move in all_moves:
+             if isinstance(move, dict):
+                 temp_evaluated_plays.append({'move': move, 'final_score': float(move.get('score', 0.0))})
+        temp_evaluated_plays.sort(key=lambda x: x['final_score'], reverse=True)
+        return temp_evaluated_plays
+    def ai_turn_logic_dummy(all_moves, current_rack, board_tile_counts_obj,
+                            blanks_played_count, bag_count,
+                            get_remaining_tiles_func, find_best_exchange_option_func,
+                            EXCHANGE_PREFERENCE_THRESHOLD, MIN_SCORE_TO_AVOID_EXCHANGE):
+        print("!!! Using dummy ai_turn_logic - defaulting to pass !!!")
+        # Minimal fallback: just pass if logic fails
+        return ('pass', None)
+    def calculate_luck_factor_dummy(drawn_tiles, move_rack_before,
+                                    board_tile_counts_obj, blanks_played_count,
+                                    get_remaining_tiles_func):
+        print("!!! Using dummy calculate_luck_factor - returning 0.0 !!!")
+        return 0.0
+    def get_expected_draw_value_dummy(current_rack, board_tile_counts_obj,
+                                      blanks_played_count, get_remaining_tiles_func):
+        print("!!! Using dummy get_expected_draw_value - returning 0.0 !!!")
+        return 0.0
+    
+
+
 
     # Assign ALL dummies to the original names
     _gaddag_traverse_cython = _gaddag_traverse_dummy
@@ -134,17 +172,26 @@ except ImportError as e:
     evaluate_leave_cython = evaluate_leave_dummy
     # --- MODIFICATION: Assign new dummy, remove helper assignment ---
     generate_all_moves_gaddag_cython = generate_all_moves_gaddag_dummy
-    # REMOVED: _process_anchors_cython = _process_anchors_dummy
-    # --- END MODIFICATION ---
+    evaluate_single_move_cython = evaluate_single_move_dummy
+    standard_evaluation_cython = standard_evaluation_dummy
+    ai_turn_logic_cython = ai_turn_logic_dummy
+    calculate_luck_factor_cython = calculate_luck_factor_dummy
+    get_expected_draw_value_cython = get_expected_draw_value_dummy
+    
+
+
 
     # Set ALL flags to False
     USE_CYTHON_GADDAG = False
     USE_CYTHON_CROSS_CHECKS = False
     USE_CYTHON_EVALUATE_LEAVE = False
-    # --- MODIFICATION: Update flag name ---
     USE_CYTHON_MOVE_GENERATION = False
-    # REMOVED: USE_CYTHON_ANCHOR_PROCESSING = False
-    # --- END MODIFICATION ---
+    USE_CYTHON_EVALUATE_SINGLE_MOVE = False
+    USE_CYTHON_STANDARD_EVALUATION = False
+    USE_CYTHON_AI_TURN_LOGIC = False
+    USE_CYTHON_LUCK_FACTOR = False
+    USE_CYTHON_EXPECTED_DRAW = False
+    
 
     # Optionally, exit here if fallbacks are unacceptable
     # sys.exit("Essential Cython modules failed to load.")
@@ -3820,88 +3867,6 @@ def create_vertical_histogram(quartile_counts, total_ranked, title, max_height=1
 
 
 
-# Function to Restore and Modify: evaluate_single_move
-
-def evaluate_single_move(move_dict, leave_lookup_table): # Changed second arg
-    """
-    Combines the immediate score of a move with the evaluated score of its leave.
-    Calls the Cython version of evaluate_leave.
-
-    Args:
-        move_dict (dict): The dictionary representing the move (must contain 'score' and 'leave').
-        leave_lookup_table (dict): The pre-loaded LEAVE_LOOKUP_TABLE.
-
-    Returns:
-        float: The combined evaluation score for the move.
-               Using float allows for potential future weighting.
-    """
-    immediate_score = move_dict.get('score', 0)
-    leave = move_dict.get('leave', [])
-
-    # --- MODIFIED: Directly call Cython version ---
-    # Ensure evaluate_leave_cython is imported and available
-    try:
-        leave_score_adjustment = evaluate_leave_cython(leave)
-    except NameError:
-         print("ERROR: evaluate_leave_cython not found in evaluate_single_move!")
-         leave_score_adjustment = 0.0
-    except Exception as e:
-         print(f"ERROR calling evaluate_leave_cython: {e}")
-         leave_score_adjustment = 0.0
-    # --- END MODIFICATION ---
-
-
-    # Simple combination for now: add leave adjustment to immediate score
-    combined_score = float(immediate_score + leave_score_adjustment)
-
-    return combined_score
-
-
-
-
-
-
-
-def analyze_unseen_pool(remaining_tiles_dict):
-        """
-        Calculates the expected value of drawing a single tile from the unseen pool,
-        based on single-tile leave values and probabilities.
-
-        Args:
-            remaining_tiles_dict (dict): Dictionary mapping letters to counts of unseen tiles.
-
-        Returns:
-            dict: Dictionary containing the expected draw value.
-                  {'expected_draw_value': float}
-                  Returns {'expected_draw_value': 0.0} if the pool is empty.
-        """
-        total_unseen_tiles = sum(remaining_tiles_dict.values())
-        expected_value_sum = 0.0
-
-        if total_unseen_tiles == 0:
-            return {'expected_draw_value': 0.0}
-
-        for tile, count in remaining_tiles_dict.items():
-            if count <= 0:
-                continue
-
-            # Get the value of this single tile using the leave evaluation function
-            # Assumes evaluate_leave([tile]) returns the desired static value
-            try:
-                # Pass tile as a single-element list
-                single_tile_value = evaluate_leave_cython([tile])
-            except Exception as e:
-                # Handle cases where evaluate_leave might fail for a single tile
-                # or if the tile isn't expected (e.g., not A-Z or ' ')
-                print(f"Warning: Could not evaluate single tile '{tile}' for pool analysis: {e}")
-                single_tile_value = 0.0 # Assign neutral value on error
-
-            probability = count / total_unseen_tiles
-            expected_value_sum += single_tile_value * probability
-
-        # print(f"DEBUG analyze_unseen_pool: Pool: {remaining_tiles_dict}, Expected Value: {expected_value_sum:.2f}") # Optional debug
-        return {'expected_draw_value': expected_value_sum}
-
 
 
 
@@ -3925,84 +3890,90 @@ def estimate_draw_value(num_to_draw, pool_analysis):
         return estimated_total_draw_value
 
 
-def find_best_exchange_option(rack, remaining_tiles_dict, bag_count):
-        """
-        Determines the best set of tiles to exchange to maximize the
-        evaluated score of the *remaining* tiles, plus an estimated draw value
-        based on the expected value method.
 
-        Args:
-            rack (list): The AI's current rack.
-            remaining_tiles_dict (dict): Dictionary of unseen tiles (bag + opponent).
-            bag_count (int): Number of tiles currently in the bag.
 
-        Returns:
-            tuple: (list_of_tiles_to_exchange, best_estimated_value)
-                   Returns ([], -float('inf')) if no valid exchange is possible or beneficial.
-        """
-        best_overall_exchange_tiles = []
-        best_overall_estimated_value = -float('inf') # Keep track of the best value found
 
-        if not rack:
-            return [], -float('inf')
 
-        # Calculate the expected value based on the pool (only needs to be done once)
-        pool_analysis = analyze_unseen_pool(remaining_tiles_dict)
+def find_best_exchange_option(rack, board_tile_counts, blanks_played_count, bag_count): # <<< MODIFIED SIGNATURE
+    """
+    Determines the best set of tiles to exchange to maximize the
+    evaluated score of the *remaining* tiles, plus an estimated draw value
+    based on the expected value method (using Cython helper).
 
-        # Iterate through exchanging k=1 to min(7, len(rack)) tiles
-        for k in range(1, min(len(rack), 7) + 1):
-            # Check if there are enough tiles in the bag to perform this exchange
-            if bag_count < k:
-                continue # Cannot exchange k tiles if fewer than k are in the bag
+    Args:
+        rack (list): The AI's current rack.
+        board_tile_counts (Counter): Counter of tiles currently on the board. # <<< ADDED DOC
+        blanks_played_count (int): Number of blanks played so far. # <<< ADDED DOC
+        bag_count (int): Number of tiles currently in the bag.
 
-            best_leave_score_for_k = -float('inf')
-            best_kept_subset_for_k = [] # Track the best subset to keep for this k
+    Returns:
+        tuple: (list_of_tiles_to_exchange, best_estimated_value)
+               Returns ([], -float('inf')) if no valid exchange is possible or beneficial.
+    """
+    # --- REMOVED Global declarations ---
+    # global board_tile_counts, blanks_played_count # REMOVED
 
-            # Find the combination of k tiles to *remove* that leaves the best rack
-            # This is equivalent to finding the best combination of (len(rack) - k) tiles to *keep*
-            num_to_keep = len(rack) - k
-            if num_to_keep < 0: continue # Should not happen, but safety check
+    best_overall_exchange_tiles = []
+    best_overall_estimated_value = -float('inf')
 
-            current_best_exchange_tiles_for_k = [] # Track the tiles exchanged for the best leave found for this k
+    if not rack:
+        return [], -float('inf')
 
-            if num_to_keep == 0: # Exchanging all tiles
-                 best_leave_score_for_k = 0 # No leave value if keeping zero tiles
-                 best_kept_subset_for_k = []
-                 current_best_exchange_tiles_for_k = rack[:] # Exchanging all
-            else:
-                # Iterate through all combinations of tiles to KEEP
-                for kept_subset_tuple in itertools.combinations(rack, num_to_keep):
-                    kept_subset_list = list(kept_subset_tuple)
+    # Calculate expected draw value using Cython helper
+    try:
+        # Pass necessary arguments to the Cython helper
+        expected_single_draw_value = get_expected_draw_value_cython(
+            rack,
+            board_tile_counts,      # Use argument
+            blanks_played_count,    # Use argument
+            get_remaining_tiles     # Pass function object
+        )
+    except Exception as e_exp:
+        print(f"Error calling get_expected_draw_value_cython: {e_exp}")
+        expected_single_draw_value = 0.0
 
-                    current_leave_score = evaluate_leave_cython(kept_subset_list)
-                    
+    # Iterate through exchanging k=1 to min(7, len(rack)) tiles
+    for k in range(1, min(len(rack), 7) + 1):
+        if bag_count < k:
+            continue
 
-                    if current_leave_score > best_leave_score_for_k:
-                        best_leave_score_for_k = current_leave_score
-                        best_kept_subset_for_k = kept_subset_list
+        best_leave_score_for_k = -float('inf')
+        best_kept_subset_for_k = []
+        current_best_exchange_tiles_for_k = []
 
-                # Determine which tiles were exchanged to achieve this best leave
-                temp_rack_counts = Counter(rack)
-                temp_kept_counts = Counter(best_kept_subset_for_k)
-                temp_rack_counts.subtract(temp_kept_counts)
-                current_best_exchange_tiles_for_k = list(temp_rack_counts.elements())
+        num_to_keep = len(rack) - k
+        if num_to_keep < 0: continue
 
-            # Calculate the total estimated value for exchanging these 'k' tiles
-            # Use the modified estimate_draw_value which uses the new pool analysis
-            estimated_value_of_draw = estimate_draw_value(k, pool_analysis)
-            # The leave score is the best one found for keeping (len(rack) - k) tiles
-            leave_score = best_leave_score_for_k
-            total_estimated_value = leave_score + estimated_value_of_draw
+        if num_to_keep == 0:
+             best_leave_score_for_k = 0
+             best_kept_subset_for_k = []
+             current_best_exchange_tiles_for_k = rack[:]
+        else:
+            for kept_subset_tuple in itertools.combinations(rack, num_to_keep):
+                kept_subset_list = list(kept_subset_tuple)
+                current_leave_score = evaluate_leave_cython(kept_subset_list)
+                if current_leave_score > best_leave_score_for_k:
+                    best_leave_score_for_k = current_leave_score
+                    best_kept_subset_for_k = kept_subset_list
 
-            # print(f"DEBUG Exchange Option (k={k}): Exchanging {current_best_exchange_tiles_for_k}, Keeping {best_kept_subset_for_k}, Leave Score: {leave_score:.1f}, Draw Est: {estimated_value_of_draw:.1f}, Total Est: {total_estimated_value:.1f}") # Optional debug
+            temp_rack_counts = Counter(rack)
+            temp_kept_counts = Counter(best_kept_subset_for_k)
+            temp_rack_counts.subtract(temp_kept_counts)
+            current_best_exchange_tiles_for_k = list(temp_rack_counts.elements())
 
-            # Update the overall best exchange found so far
-            if total_estimated_value > best_overall_estimated_value:
-                best_overall_estimated_value = total_estimated_value
-                best_overall_exchange_tiles = current_best_exchange_tiles_for_k
+        estimated_value_of_draw = expected_single_draw_value * k
+        leave_score = best_leave_score_for_k
+        total_estimated_value = leave_score + estimated_value_of_draw
 
-        # print(f"DEBUG Best Exchange Found: Tiles={best_overall_exchange_tiles}, Est Value={best_overall_estimated_value:.1f}") # Optional debug
-        return best_overall_exchange_tiles, best_overall_estimated_value
+        if total_estimated_value > best_overall_estimated_value:
+            best_overall_estimated_value = total_estimated_value
+            best_overall_exchange_tiles = current_best_exchange_tiles_for_k
+
+    return best_overall_exchange_tiles, best_overall_estimated_value
+
+
+
+
 
 
 
@@ -4805,54 +4776,46 @@ def perform_leave_lookup(leave_key_str):
 
 
 
-# Function to Replace: ai_turn
-# REASON: Suppress most print statements during batch mode.
+# Function to Replace: ai_turn (Complete)
+# REASON: Call ai_turn_logic_cython for standard evaluation and decision making. Call calculate_luck_factor_cython.
 
 def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_count, exchange_count, consecutive_zero_point_turns, player_names, board_tile_counts, blanks_played_count, dropdown_open=False, hinting=False, showing_all_words=False, letter_checks=None): # Added blanks_played_count param
     """
     Handles the AI's turn... Checks GADDAG status before generating moves or solving endgame.
-    Restored simpler Power Tile pause logic.
-    Uses board_tile_counts and blanks_played_count for evaluations.
-    Reduced printing for batch mode.
-    Calls correct Cython helper for "Only Fives" check.
-    Uses new pool evaluation for exchange decisions.
-    Removes pool_quality_score calculation and history storage.
-    Uses EXCHANGE_PREFERENCE_THRESHOLD = 1.0.
-    ADDED DEBUG PRINTS for evaluation comparison.
-    ADDED DETAILED DEBUG PRINTS for top 20 plays and best exchange in non-batch mode.
-    ADDED MIN_SCORE_TO_AVOID_EXCHANGE threshold logic.
-    Ensures correct direction ("right"/"down") is stored and used.
-    Calls generate_all_moves_gaddag_cython.
-    Correctly passes blanks_played_count to play_hint_move and unpacks its result.
-    ADDED EXTENSIVE DEBUGGING FOR AVA HANG.
-    ADDED DEBUGGING FOR POWER TILES PAUSE.
-    Suppresses most prints during batch mode.
+    Handles practice mode pauses.
+    Calls run_ai_simulation if USE_AI_SIMULATION is True.
+    Otherwise, calls ai_turn_logic_cython for standard evaluation and decision.
+    Executes the chosen action (play, exchange, pass).
+    Calculates luck factor using calculate_luck_factor_cython.
     """
+    # --- Global Access ---
     global last_word, last_score, last_start, last_direction, move_history, current_replay_turn, practice_mode, GADDAG_STRUCTURE, last_played_highlight_coords
     global is_solving_endgame, USE_ENDGAME_SOLVER, USE_AI_SIMULATION, paused_for_bingo_practice
-    global gaddag_loading_status # Access status flag
-    global is_batch_running # Access batch status
-    global DAWG
+    global gaddag_loading_status, is_batch_running, DAWG
+    # Import necessary Python helpers if not already global
+    # from scrabble_helpers import get_remaining_tiles # Assuming it's imported globally or in scope
+    # from Scrabble_Game import find_best_exchange_option # Assuming it's imported globally or in scope
 
     start_turn_time = time.time()
     player_idx = turn - 1
     opponent_idx = 1 - player_idx
     current_rack = racks[player_idx][:]
     bag_count = len(bag)
-    # --- MODIFICATION: Use is_batch_running for conditional printing ---
     debug_prefix = f"AI {turn}" if not is_batch_running else f"AI {turn} (BATCH)"
+
+    # Initialize pause-related variables
+    paused_for_power_tile = False
+    paused_for_bingo_practice = False
+    current_power_tile = None
+
     if not is_batch_running:
         print(f"\n--- {debug_prefix} START --- Rack: {''.join(sorted(current_rack))}, Bag: {bag_count}, Blanks Played: {blanks_played_count} ---")
-    # --- END MODIFICATION ---
 
-    # --- Check GADDAG Status Early ---
+    # --- Initial Checks (GADDAG, Endgame) ---
     if gaddag_loading_status != 'loaded' or GADDAG_STRUCTURE is None or DAWG is None:
         action_chosen = 'pass'
         status_reason = "GADDAG/DAWG not loaded" if gaddag_loading_status != 'loaded' or DAWG is None else "GADDAG structure is None"
-        # Keep this print as it indicates a problem even in batch
         print(f"{debug_prefix}: Cannot generate moves, {status_reason}. Passing.")
-
-        # --- Execute forced pass ---
         move_rack_before = racks[player_idx][:]; exchanged_tiles_for_history = []; next_turn = turn; drawn_tiles = []; newly_placed = []; move_type = ''; score = 0; word = ''; positions = []; blanks_used = set(); coord = ''; word_with_blanks = ''; is_bingo = False; luck_factor = 0.0
         move_type = 'pass'; score = 0; consecutive_zero_point_turns += 1; pass_count += 1; exchange_count = 0; next_turn = 3 - turn; last_played_highlight_coords = set()
         end_turn_time = time.time(); turn_duration = end_turn_time - start_turn_time
@@ -4860,7 +4823,6 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
         move_history.append(move_data); current_replay_turn = len(move_history)
         return next_turn, first_play, pass_count, exchange_count, consecutive_zero_point_turns, [], dropdown_open, hinting, showing_all_words, False, None, False, set(), blanks_played_count
 
-    # --- Endgame Solver Check ---
     if USE_ENDGAME_SOLVER and bag_count == 0 and practice_mode != "eight_letter" and not is_solving_endgame:
         if not is_batch_running: print(f"{debug_prefix}: Entering endgame solver...")
         opponent_rack = racks[opponent_idx][:]; current_score_diff = scores[player_idx] - scores[opponent_idx]; is_solving_endgame = True
@@ -4891,15 +4853,8 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
         move_history.append(move_data); current_replay_turn = len(move_history)
         return next_turn, first_play, pass_count, exchange_count, consecutive_zero_point_turns, [], dropdown_open, hinting, showing_all_words, False, None, False, set(), blanks_played_count
 
-    # --- Normal Turn Logic ---
-    paused_for_power_tile = False
-    paused_for_bingo_practice = False
-    current_power_tile = None
+    # --- Generate Moves ---
     all_moves = []
-    best_play_move = None
-    action_chosen = 'pass' # Default action
-    evaluated_play_options = []
-
     if not is_batch_running: print(f"{debug_prefix}: Generating moves...")
     try:
         all_moves = generate_all_moves_gaddag_cython(
@@ -4907,21 +4862,28 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
         )
         if all_moves is None: all_moves = []
         if not is_batch_running: print(f"{debug_prefix}: Generated {len(all_moves)} raw moves.")
-
     except Exception as e_gen:
-        # Keep error print
         print(f"{debug_prefix}: ERROR during Cython move generation: {e_gen}")
         import traceback
         traceback.print_exc()
         all_moves = []
 
-    # Filter moves for "Only Fives"
+    # --- Practice Mode Filtering / Pausing ---
     if practice_mode == "only_fives":
-        # ... (filtering logic - keep prints conditional) ...
+        original_tiles_copy = [row[:] for row in tiles]; original_blanks_copy = blanks.copy(); filtered_moves = []
+        for move in all_moves:
+            temp_tiles = [row[:] for row in original_tiles_copy]; temp_blanks = original_blanks_copy.copy(); newly_placed_details = move.get('newly_placed', [])
+            if not newly_placed_details: continue
+            for r, c, letter in newly_placed_details:
+                 if 0 <= r < GRID_SIZE and 0 <= c < GRID_SIZE:
+                     temp_tiles[r][c] = letter
+                     if (r, c) in move.get('blanks', set()): temp_blanks.add((r, c))
+            words_formed_details = find_all_words_formed_cython(newly_placed_details, temp_tiles)
+            if any(len("".join(t[2] for t in word_detail)) == 5 for word_detail in words_formed_details): filtered_moves.append(move)
+        all_moves = filtered_moves;
         if not is_batch_running:
             print(f"{debug_prefix}: Filtered for 'Only Fives'. Remaining moves: {len(all_moves)}")
 
-    # --- Practice Mode Pause Checks ---
     if not is_batch_running: print(f"{debug_prefix} (DEBUG): Checking Power Tile Pause. practice_mode='{practice_mode}', letter_checks={letter_checks}")
     if practice_mode == "power_tiles" and letter_checks:
         checked_power_tiles = {letter for i, letter in enumerate(['J', 'Q', 'X', 'Z']) if letter_checks[i]}
@@ -4934,111 +4896,82 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
             paused_for_power_tile = True
             if not is_batch_running: print(f"{debug_prefix}: AI turn paused for power tile practice. Target: {current_power_tile}")
             end_turn_time = time.time(); turn_duration = end_turn_time - start_turn_time
-            return turn, first_play, pass_count, exchange_count, consecutive_zero_point_turns, all_moves, dropdown_open, hinting, showing_all_words, paused_for_power_tile, current_power_tile, False, set(), blanks_played_count
+            return turn, first_play, pass_count, exchange_count, consecutive_zero_point_turns, all_moves, dropdown_open, hinting, showing_all_words, paused_for_power_tile, current_power_tile, paused_for_bingo_practice, set(), blanks_played_count
     elif practice_mode == "bingo_bango_bongo":
         found_bingo = any(move.get('is_bingo', False) for move in all_moves)
         if found_bingo:
             paused_for_bingo_practice = True
             if not is_batch_running: print(f"{debug_prefix}: AI turn paused for Bingo, Bango, Bongo practice. Bingo found.")
             end_turn_time = time.time(); turn_duration = end_turn_time - start_turn_time
-            return turn, first_play, pass_count, exchange_count, consecutive_zero_point_turns, all_moves, dropdown_open, hinting, showing_all_words, False, None, paused_for_bingo_practice, set(), blanks_played_count
+            return turn, first_play, pass_count, exchange_count, consecutive_zero_point_turns, all_moves, dropdown_open, hinting, showing_all_words, paused_for_power_tile, current_power_tile, paused_for_bingo_practice, set(), blanks_played_count
 
     # --- AI Action Decision Logic ---
-    move_rack_before = racks[player_idx][:]; exchanged_tiles_for_history = []; best_play_evaluation = -float('inf'); best_exchange_tiles = []; best_exchange_evaluation = -float('inf')
-    can_play = bool(all_moves); can_exchange_proactively = bag_count >= 1
+    move_rack_before = racks[player_idx][:]; exchanged_tiles_for_history = []
+    best_play_move = None
+    best_exchange_tiles = []
+    action_chosen = 'pass' # Default action
+
+    can_play = bool(all_moves)
     run_simulation = (USE_AI_SIMULATION and game_mode in [MODE_HVA, MODE_AVA] and practice_mode is None and can_play)
 
-    # --- Evaluate Best Play Option ---
     if run_simulation:
+        # --- Simulation Path ---
         if not is_batch_running: print(f"{debug_prefix}: Running simulation...")
         opponent_rack_len_sim = len(racks[opponent_idx]) if opponent_idx < len(racks) else 7
         simulation_results = run_ai_simulation(current_rack, opponent_rack_len_sim, tiles, blanks, board, bag, GADDAG_STRUCTURE.root, first_play, board_tile_counts, blanks_played_count)
-        evaluated_play_options = simulation_results
+
         if simulation_results:
              best_play_move = simulation_results[0]['move']
-             best_play_evaluation = simulation_results[0]['final_score']
-             if not is_batch_running: print(f"{debug_prefix}: Simulation Best Play: '{best_play_move.get('word_with_blanks','?')}' (Sim Eval: {best_play_evaluation:.2f})")
+             action_chosen = 'play'
+             if not is_batch_running:
+                 best_play_evaluation = simulation_results[0]['final_score']
+                 print(f"{debug_prefix}: Simulation Best Play: '{best_play_move.get('word_with_blanks','?')}' (Sim Eval: {best_play_evaluation:.2f})")
         else:
-             if not is_batch_running: print(f"{debug_prefix}: Simulation returned no valid play. Falling back.")
-             run_simulation = False; best_play_move = None
-    # Standard evaluation
-    if not run_simulation and can_play:
-        if not is_batch_running: print(f"{debug_prefix}: Running standard evaluation for {len(all_moves)} moves...")
-        temp_evaluated_plays = []
-        for move in all_moves:
-            evaluated_score = evaluate_single_move(move, LEAVE_LOOKUP_TABLE)
-            temp_evaluated_plays.append({'move': move, 'final_score': evaluated_score})
-            if evaluated_score > best_play_evaluation:
-                best_play_evaluation = evaluated_score
-                best_play_move = move
-        evaluated_play_options = sorted(temp_evaluated_plays, key=lambda x: x['final_score'], reverse=True)
-        if not is_batch_running:
-            if best_play_move:
-                print(f"{debug_prefix}: Standard Best Play: '{best_play_move.get('word_with_blanks','?')}' (Std Eval: {best_play_evaluation:.2f}, Raw Score: {best_play_move.get('score', 0)})")
-            else:
-                print(f"{debug_prefix}: Standard evaluation found no best play.")
+             action_chosen = 'pass'
+             best_play_move = None
+             if not is_batch_running: print(f"{debug_prefix}: Simulation returned no valid play. Passing.")
 
-    # --- DETAILED PLAY OPTIONS PRINT (Non-Batch Only) ---
-    if not is_batch_running and evaluated_play_options:
-        print(f"\n--- {debug_prefix} Top Play Evaluations (Max 20) ---")
-        print("  # | Word (Score) | Leave (Eval) | OppAvg | Final Eval")
-        print("----------------------------------------------------------")
-        for i, eval_option in enumerate(evaluated_play_options[:20]):
-            move = eval_option['move']
-            final_score = eval_option['final_score']
-            word = move.get('word_with_blanks', move.get('word', '?'))
-            raw_score = move.get('score', 0)
-            leave = move.get('leave', [])
-            leave_str = "".join(sorted(l if l != ' ' else '?' for l in leave))
-            leave_eval = evaluate_leave_cython(leave)
-            opp_avg_str = f"{move.get('avg_opp_score', 0.0):>6.1f}" if run_simulation else "   N/A"
-            print(f" {i+1:>2} | {word} ({raw_score}) | {leave_str} ({leave_eval:.1f}) | {opp_avg_str} | {final_score:>7.2f}")
-        print("----------------------------------------------------------\n")
-
-    # --- Evaluate Best Exchange Option ---
-    best_exchange_tiles = []
-    best_exchange_evaluation = -float('inf')
-    if not can_play or can_exchange_proactively:
-        if not is_batch_running: print(f"{debug_prefix}: Evaluating exchange options (Bag: {bag_count})...")
-        remaining_dict_for_exchange = get_remaining_tiles(racks[player_idx], board_tile_counts, blanks_played_count)
-        best_exchange_tiles, best_exchange_evaluation = find_best_exchange_option(racks[player_idx], remaining_dict_for_exchange, bag_count)
-        if not is_batch_running:
-            if best_exchange_tiles:
-                print(f"{debug_prefix}: Best Exchange Option: Exchange {''.join(sorted(best_exchange_tiles))} (Exchange Eval: {best_exchange_evaluation:.2f})")
-            else:
-                print(f"{debug_prefix}: No beneficial exchange option found (Best Eval: {best_exchange_evaluation:.2f}).")
-
-    # --- Final Decision Logic ---
-    if not is_batch_running:
-        print(f"{debug_prefix}: Comparing Options: Play Eval = {best_play_evaluation:.2f}, Exchange Eval = {best_exchange_evaluation:.2f}, Threshold = {EXCHANGE_PREFERENCE_THRESHOLD}")
-        if best_play_move:
-             print(f"  Best Play Raw Score: {best_play_move.get('score', 0)}")
-
-    if can_play and best_play_move:
-        best_play_raw_score = best_play_move.get('score', 0)
-        if best_play_raw_score >= MIN_SCORE_TO_AVOID_EXCHANGE:
-            action_chosen = 'play'
-            if not is_batch_running: print(f"  Decision Reason: Best play raw score ({best_play_raw_score}) >= threshold ({MIN_SCORE_TO_AVOID_EXCHANGE}). Forcing PLAY.")
-        else:
-            action_chosen = 'play'
-            if best_exchange_tiles:
-                current_play_eval = best_play_evaluation
-                if best_exchange_evaluation > current_play_eval + EXCHANGE_PREFERENCE_THRESHOLD:
-                    action_chosen = 'exchange'
-                    if not is_batch_running: print(f"  Decision Reason: Exchange eval ({best_exchange_evaluation:.2f}) > Play eval ({current_play_eval:.2f}) + Threshold ({EXCHANGE_PREFERENCE_THRESHOLD}). Choosing EXCHANGE.")
-    elif best_exchange_tiles:
-         action_chosen = 'exchange'
-         if not is_batch_running: print(f"  Decision Reason: No valid plays, beneficial exchange found. Choosing EXCHANGE.")
     else:
-        action_chosen = 'pass'
-        if not is_batch_running: print(f"  Decision Reason: No valid plays, no beneficial exchange. Choosing PASS.")
+        # --- Standard Evaluation Path (using Cython) ---
+        if not is_batch_running: print(f"{debug_prefix}: Running standard evaluation/decision logic via Cython...")
+        try:
+            # Pass Python helper functions as objects
+            action_chosen, best_move_data = ai_turn_logic_cython(
+                all_moves,
+                current_rack,
+                board_tile_counts, # Pass Counter object
+                blanks_played_count,
+                bag_count,
+                get_remaining_tiles, # Pass function object
+                find_best_exchange_option, # Pass function object
+                EXCHANGE_PREFERENCE_THRESHOLD,
+                MIN_SCORE_TO_AVOID_EXCHANGE
+            )
 
-    if not is_batch_running:
-        print(f"{debug_prefix}: FINAL DECISION = {action_chosen.upper()}")
-        if action_chosen == 'play':
-             print(f"  Playing: '{best_play_move.get('word_with_blanks','?')}'")
-        elif action_chosen == 'exchange':
-             print(f"  Exchanging: {''.join(sorted(best_exchange_tiles))}")
+            # Unpack results based on action_chosen
+            if action_chosen == 'play':
+                best_play_move = best_move_data # Data is the move dict
+            elif action_chosen == 'exchange':
+                best_exchange_tiles = best_move_data # Data is the list of tiles
+                best_play_move = None # Ensure best_play_move is None if exchanging
+            else: # Pass
+                best_play_move = None
+                best_exchange_tiles = []
+
+            if not is_batch_running:
+                 print(f"{debug_prefix}: Cython logic chose action: {action_chosen.upper()}")
+                 if action_chosen == 'play' and best_play_move:
+                     print(f"  Play Details: '{best_play_move.get('word_with_blanks','?')}' Score: {best_play_move.get('score', 0)}")
+                 elif action_chosen == 'exchange':
+                     print(f"  Exchange Details: Tiles = {''.join(sorted(best_exchange_tiles))}")
+
+        except Exception as e_logic:
+            print(f"{debug_prefix}: ERROR during Cython AI logic execution: {e_logic}")
+            import traceback
+            traceback.print_exc()
+            action_chosen = 'pass' # Default to pass on error
+            best_play_move = None
+            best_exchange_tiles = []
 
     # --- Execute Action ---
     next_turn = turn; drawn_tiles = []; newly_placed = []; move_type = ''; score = 0; word = ''; positions = []; blanks_used = set(); coord = ''; word_with_blanks = ''; is_bingo = False; luck_factor = 0.0
@@ -5052,7 +4985,7 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
             next_turn, drawn_tiles, newly_placed, board_tile_counts, blanks_played_count = play_hint_move(best_play_move, tiles, racks, blanks, scores, turn, bag, board, board_tile_counts, blanks_played_count)
             move_type = 'place'; score = best_play_move.get('score', 0); word = word_play; positions = best_play_move.get('positions', []); blanks_used = best_play_move.get('blanks', set()); coord = coord_play; word_with_blanks = best_play_move.get('word_with_blanks', ''); is_bingo = best_play_move.get('is_bingo', False)
             first_play = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; last_played_highlight_coords = set((pos[0], pos[1]) for pos in positions)
-        else: print(f"{debug_prefix} Error: Action was 'play' but best_play_move is None. Passing."); action_chosen = 'pass' # Keep error print
+        else: print(f"{debug_prefix} Error: Action was 'play' but best_play_move is None. Passing."); action_chosen = 'pass'
     if action_chosen == 'exchange':
         if best_exchange_tiles:
             if not is_batch_running: print(f"{debug_prefix} exchanging {len(best_exchange_tiles)} tiles: {''.join(sorted(best_exchange_tiles))}")
@@ -5064,22 +4997,32 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
             if not is_ai[player_idx]: racks[player_idx].sort()
             bag.extend(exchanged_tiles_for_history); random.shuffle(bag)
             move_type = 'exchange'; score = 0; consecutive_zero_point_turns += 1; exchange_count += 1; pass_count = 0; next_turn = 3 - turn; last_played_highlight_coords = set()
-        else: print(f"{debug_prefix} Error: Action was 'exchange' but best_exchange_tiles is empty. Passing."); action_chosen = 'pass' # Keep error print
+        else: print(f"{debug_prefix} Error: Action was 'exchange' but best_exchange_tiles is empty. Passing."); action_chosen = 'pass'
     if action_chosen == 'pass':
         if not is_batch_running: print(f"{debug_prefix} passing.")
         move_type = 'pass'; score = 0; consecutive_zero_point_turns += 1; pass_count += 1; exchange_count = 0; next_turn = 3 - turn; last_played_highlight_coords = set()
 
     # Calculate luck factor based on drawn tiles (if any)
+    luck_factor = 0.0 # Initialize
     if drawn_tiles:
-        drawn_leave_value = evaluate_leave_cython(drawn_tiles)
-        remaining_before_draw = get_remaining_tiles(move_rack_before, board_tile_counts, blanks_played_count)
-        pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
-        expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
-        expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
-        luck_factor = drawn_leave_value - expected_draw_value_total
-        if not is_batch_running:
-            drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles))
-            print(f"{debug_prefix}: Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Expected: {expected_draw_value_total:.2f}, Luck: {luck_factor:+.2f}")
+        # --- Call Cython function ---
+        try:
+            # Pass the Python get_remaining_tiles function as an argument
+            luck_factor = calculate_luck_factor_cython(
+                drawn_tiles,
+                move_rack_before,
+                board_tile_counts, # Pass Counter object
+                blanks_played_count,
+                get_remaining_tiles # Pass function object
+            )
+            if not is_batch_running:
+                drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles))
+                # Print result from Cython calculation
+                print(f"{debug_prefix}: Drew: {drawn_tiles_str}, Luck (Cython): {luck_factor:+.2f}")
+        except Exception as e_luck:
+            print(f"Error calling calculate_luck_factor_cython: {e_luck}")
+            luck_factor = 0.0 # Default on error
+        # --- END Call Cython function ---
 
     end_turn_time = time.time(); turn_duration = end_turn_time - start_turn_time
     if not is_batch_running:
@@ -5095,7 +5038,9 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play, pass_cou
 
     move_history.append(move_data); current_replay_turn = len(move_history)
 
+    # Return uses the initialized/potentially updated pause flags
     return next_turn, first_play, pass_count, exchange_count, consecutive_zero_point_turns, [], dropdown_open, hinting, showing_all_words, paused_for_power_tile, current_power_tile, paused_for_bingo_practice, set(), blanks_played_count
+
 
 
 
@@ -5966,6 +5911,9 @@ def draw_game_screen(screen, state):
 
 
 
+# Function to Replace: process_game_events (Complete)
+# REASON: Call calculate_luck_factor_cython instead of Python logic.
+
 def process_game_events(state, drawn_rects): # Added drawn_rects parameter
     """
     Handles the main event loop, processing user input and system events.
@@ -5975,6 +5923,7 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
     Removes current_turn_pool_quality_score.
     Ensures state is always returned.
     Adds debug print for first_play flag before validation.
+    Calls calculate_luck_factor_cython.
     """
     # --- MODIFICATION: Add global DAWG ---
     global DAWG
@@ -6156,7 +6105,6 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                 idx = state['specify_rack_active_input']
                 if event.key == pygame.K_BACKSPACE: state['specify_rack_inputs'][idx] = state['specify_rack_inputs'][idx][:-1]
                 elif event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
-                    # Use rect from drawn_rects
                     confirm_rect_sr = drawn_rects.get('confirm_rect_sr')
                     if confirm_rect_sr: pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {'pos': confirm_rect_sr.center, 'button': 1}))
                 elif event.key == pygame.K_TAB: state['specify_rack_active_input'] = 1 - idx
@@ -6167,7 +6115,6 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                 idx = state['simulation_config_active_input']
                 if event.key == pygame.K_BACKSPACE: state['simulation_config_inputs'][idx] = state['simulation_config_inputs'][idx][:-1]
                 elif event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
-                    # Use rect from drawn_rects
                     sim_simulate_rect = drawn_rects.get('sim_simulate_rect')
                     if sim_simulate_rect: pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {'pos': sim_simulate_rect.center, 'button': 1}))
                 elif event.key == pygame.K_TAB: state['simulation_config_active_input'] = (idx + 1) % len(state['simulation_config_inputs'])
@@ -6179,9 +6126,9 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                 is_human_turn_or_paused = (0 <= current_player_idx < len(state['is_ai'])) and (not state['is_ai'][current_player_idx] or state['paused_for_power_tile'] or state['paused_for_bingo_practice'])
 
                 if is_human_turn_or_paused:
-                    mods = pygame.key.get_mods() # Get modifier keys status
-                    # --- PASTE LOGIC: Check for Modifier Key ---
+                    mods = pygame.key.get_mods()
                     if event.key == pygame.K_v and (mods & pygame.KMOD_CTRL or mods & pygame.KMOD_META) and pyperclip_available:
+                        # ... (paste logic - unchanged) ...
                         try:
                             pasted_text = pyperclip.paste()
                             if pasted_text and pasted_text.isalpha():
@@ -6212,10 +6159,9 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                     state['current_r'], state['current_c'] = local_current_r, local_current_c; current_r, current_c = local_current_r, local_current_c
                                     if not (0 <= local_current_r < GRID_SIZE and 0 <= local_current_c < GRID_SIZE): print("  Typing cursor moved out of bounds after placement. Stopping paste."); break
                         except Exception as e: print(f"Error during paste: {e}")
-                    # --- END PASTE LOGIC ---
 
-                    # --- NORMAL TYPING LOGIC ---
                     elif event.unicode.isalpha() and len(event.unicode) == 1:
+                        # ... (normal typing logic - unchanged) ...
                         letter = event.unicode.upper()
                         current_rack_debug = state['racks'][state['turn']-1]; has_letter = letter in current_rack_debug; has_blank = ' ' in current_rack_debug
                         if has_letter or has_blank:
@@ -6237,10 +6183,9 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                     while 0 <= current_r < GRID_SIZE and state['original_tiles'][current_r][current_c]: current_r += 1
                                 state['current_r'] = current_r; state['current_c'] = current_c
                             else: print(f"Warning: Attempted to type '{letter}' at invalid cursor ({current_r},{current_c})")
-                        # else: pass # Letter not available
-                    # --- END NORMAL TYPING LOGIC ---
 
                     elif event.key == pygame.K_BACKSPACE and state['typing']:
+                        # ... (backspace logic - unchanged) ...
                         if state['word_positions']:
                             last_r, last_c, last_letter = state['word_positions'].pop(); state['tiles'][last_r][last_c] = ''
                             tile_to_return = ' ' if (last_r, last_c) in state['blanks'] else last_letter
@@ -6257,7 +6202,6 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                             newly_placed_details = [(r, c, l) for r, c, l in state['word_positions']];
                             initial_rack_size_for_play = len(state['original_rack']) if state['original_rack'] else 0
 
-                            # --- DEBUG PRINTS ---
                             print("\n--- DEBUG: Finalizing Typed Play ---")
                             print(f"  Newly Placed: {newly_placed_details}")
                             print(f"  First Play? {state['first_play']}")
@@ -6271,18 +6215,17 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                 print(f"DEBUG process_game_events: Passing DAWG object with id={id(DAWG)}, type={type(DAWG)}")
                             else:
                                 print("DEBUG process_game_events: Global DAWG is None or not found!")
-                            # --- END DEBUG PRINTS ---
 
                             if 'DAWG' not in globals() or DAWG is None:
                                  print("CRITICAL ERROR: Global DAWG object not available for validation!")
-                                 state['typing'] = False; state['word_positions'] = []; # ... revert tiles/rack ...
+                                 state['typing'] = False; state['word_positions'] = [];
                                  if state['original_tiles'] and state['original_rack']:
                                      for r_wp, c_wp, _ in newly_placed_details: state['tiles'][r_wp][c_wp] = state['original_tiles'][r_wp][c_wp]
                                      state['racks'][state['turn']-1] = state['original_rack'][:]
                                      if not state['is_ai'][state['turn']-1]: state['racks'][state['turn']-1].sort()
                                      blanks_to_remove = set((r_wp, c_wp) for r_wp, c_wp, _ in newly_placed_details if (r_wp, c_wp) in state['blanks']); state['blanks'].difference_update(blanks_to_remove)
                                  state['original_tiles'] = None; state['original_rack'] = None; state['selected_square'] = None; current_r = None; current_c = None; state['current_r'] = None; state['current_c'] = None; state['typing_direction'] = None; state['typing_start'] = None
-                                 continue # Skip rest of this event processing
+                                 continue
 
                             original_tiles_for_validation = state.get('original_tiles')
                             if original_tiles_for_validation is None:
@@ -6295,18 +6238,16 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                 show_message_dialog("Internal error during validation (missing original state).", "Error")
                                 continue
 
-                            # --- ADDED DEBUG PRINT ---
                             print(f"  DEBUG: Calling is_valid_play_cython with state['first_play'] = {state['first_play']}")
-                            # --- END DEBUG PRINT ---
 
                             is_valid, is_bingo = is_valid_play_cython(
                                 newly_placed_details,
-                                state['tiles'], # Current board state with typed tiles
-                                state['first_play'], # Pass the flag from state
+                                state['tiles'],
+                                state['first_play'],
                                 initial_rack_size_for_play,
-                                original_tiles_for_validation, # Pass the backed-up state
-                                state['original_rack'], # Pass original rack (though not used by current is_valid_play)
-                                DAWG # Pass the globally loaded DAWG object
+                                original_tiles_for_validation,
+                                state['original_rack'],
+                                DAWG
                             )
 
                             print(f"  is_valid_play_cython returned: is_valid={is_valid}, is_bingo={is_bingo}")
@@ -6315,6 +6256,7 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                 score = calculate_score_cython(newly_placed_details, state['board'], state['tiles'], state['blanks']); proceed_with_finalization = True
                                 # --- Practice Mode Validation ---
                                 if state['practice_mode'] == "power_tiles" and state['paused_for_power_tile']:
+                                    # ... (power tile practice validation - unchanged) ...
                                     is_power_tile_play = any(letter == state['current_power_tile'] for _, _, letter in newly_placed_details); power_moves_filtered = [m for m in state['all_moves'] if any(letter == state['current_power_tile'] for _, _, letter in m.get('newly_placed',[])) and is_word_length_allowed(len(m.get('word','')), state['number_checks'])]; max_power_score = max(m['score'] for m in power_moves_filtered) if power_moves_filtered else 0
                                     if is_power_tile_play and score >= max_power_score: show_message_dialog(f"Correct! You found the highest scoring play ({score} pts) with {state['current_power_tile']} matching the selected lengths.", "Power Tile Success!")
                                     elif is_power_tile_play: show_message_dialog(f"You played the {state['current_power_tile']}, but there is a higher score: ({max_power_score}). Try again!", "Incorrect Score"); proceed_with_finalization = False
@@ -6325,6 +6267,7 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                         if not state['is_ai'][state['turn']-1]: state['racks'][state['turn']-1].sort()
                                         blanks_to_remove = set((r_wp, c_wp) for r_wp, c_wp, _ in state['word_positions'] if (r_wp, c_wp) in state['blanks']); state['blanks'].difference_update(blanks_to_remove); state['typing'] = False; state['word_positions'] = []; state['original_tiles'] = None; state['original_rack'] = None; state['selected_square'] = None; current_r = None; current_c = None; state['current_r'] = None; state['current_c'] = None
                                 elif state['practice_mode'] == "bingo_bango_bongo" and state['paused_for_bingo_practice']:
+                                    # ... (bingo practice validation - unchanged) ...
                                     bingo_moves = [m for m in state['all_moves'] if m.get('is_bingo', False)]; max_bingo_score = max(m['score'] for m in bingo_moves) if bingo_moves else 0
                                     if is_bingo and score >= max_bingo_score: show_message_dialog(f"Correct! You found the highest scoring bingo ({score} pts).", "Bingo Success!"); proceed_with_finalization = True
                                     elif is_bingo: show_message_dialog(f"You played a bingo, but score {score} is not the highest ({max_bingo_score}). Try again!", "Incorrect Score"); proceed_with_finalization = False
@@ -6335,6 +6278,7 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                         if not state['is_ai'][state['turn']-1]: state['racks'][state['turn']-1].sort()
                                         blanks_to_remove = set((r_wp, c_wp) for r_wp, c_wp, _ in state['word_positions'] if (r_wp, c_wp) in state['blanks']); state['blanks'].difference_update(blanks_to_remove); state['typing'] = False; state['word_positions'] = []; state['original_tiles'] = None; state['original_rack'] = None; state['selected_square'] = None; current_r = None; current_c = None; state['current_r'] = None; state['current_c'] = None
                                 elif state['practice_mode'] == "eight_letter":
+                                    # ... (8-letter practice validation - unchanged) ...
                                     all_words_details_8l = find_all_words_formed_cython(newly_placed_details, state['tiles']); played_word_str_8l = ""; played_primary_tiles_8l = []; newly_placed_coords_8l = set((r,c) for r,c,_ in newly_placed_details)
                                     for word_detail in all_words_details_8l:
                                         if any((t[0], t[1]) in newly_placed_coords_8l for t in word_detail): played_word_str_8l = "".join(t[2] for t in word_detail); played_primary_tiles_8l = word_detail; break
@@ -6352,6 +6296,7 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                         if not state['is_ai'][state['turn']-1]: state['racks'][state['turn']-1].sort()
                                         blanks_to_remove = set((r_wp, c_wp) for r_wp, c_wp, _ in state['word_positions'] if (r_wp, c_wp) in state['blanks']); state['blanks'].difference_update(blanks_to_remove); state['typing'] = False; state['word_positions'] = []; state['original_tiles'] = None; state['original_rack'] = None; state['selected_square'] = None; current_r = None; current_c = None; state['current_r'] = None; state['current_c'] = None; proceed_with_finalization = False
                                 elif state['practice_mode'] == "only_fives":
+                                    # ... (only fives validation - unchanged) ...
                                     temp_all_words = find_all_words_formed_cython(newly_placed_details, state['tiles'])
                                     if not any(len("".join(t[2] for t in word_detail)) == 5 for word_detail in temp_all_words):
                                         show_message_dialog("At least one 5-letter word must be formed.", "Invalid Play"); proceed_with_finalization = False
@@ -6364,11 +6309,11 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                 if proceed_with_finalization:
                                     blanks_just_played = 0
                                     for r_fin, c_fin, letter_fin in newly_placed_details:
-                                        board_tile_counts[letter_fin] += 1 # Use local counter
+                                        board_tile_counts[letter_fin] += 1
                                         if (r_fin, c_fin) in state['blanks']:
                                              blanks_just_played += 1
-                                    state['blanks_played_count'] += blanks_just_played # Update the state counter
-                                    blanks_played_count = state['blanks_played_count'] # Update local variable too
+                                    state['blanks_played_count'] += blanks_just_played
+                                    blanks_played_count = state['blanks_played_count']
 
                                     state['scores'][state['turn']-1] += score;
                                     all_words_formed_details = find_all_words_formed_cython(newly_placed_details, state['tiles'])
@@ -6404,16 +6349,23 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                     else: print("  Warning: Could not determine primary word for history."); primary_word_str = "".join(l for r,c,l in newly_placed_details); word_with_blanks = primary_word_str
                                     num_to_draw = len(newly_placed_details); drawn_tiles = [state['bag'].pop() for _ in range(num_to_draw) if state['bag']]; state['racks'][state['turn']-1].extend(drawn_tiles);
                                     if not state['is_ai'][state['turn']-1]: state['racks'][state['turn']-1].sort()
+
                                     luck_factor = 0.0;
                                     if drawn_tiles:
-                                        drawn_leave_value = evaluate_leave_cython(drawn_tiles) # Use Cython
-                                        # Pass blanks_played_count
-                                        remaining_before_draw = get_remaining_tiles(state['original_rack'], board_tile_counts, blanks_played_count) # Use original rack and pass count
-                                        pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw) # Uses Cython
-                                        expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
-                                        expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
-                                        luck_factor = drawn_leave_value - expected_draw_value_total
-                                        drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
+                                        try:
+                                            luck_factor = calculate_luck_factor_cython(
+                                                drawn_tiles,
+                                                state['original_rack'],
+                                                board_tile_counts,
+                                                blanks_played_count,
+                                                get_remaining_tiles
+                                            )
+                                            drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles));
+                                            print(f"  Drew: {drawn_tiles_str}, Luck (Cython): {luck_factor:+.2f}")
+                                        except Exception as e_luck:
+                                            print(f"Error calling calculate_luck_factor_cython: {e_luck}")
+                                            luck_factor = 0.0
+
                                     move_data = {'player': state['turn'], 'move_type': 'place', 'rack': state['original_rack'], 'positions': [(t[0], t[1], t[2]) for t in primary_word_tiles], 'blanks': move_blanks_coords, 'score': score, 'word': primary_word_str, 'drawn': drawn_tiles, 'coord': get_coord(start_pos, orientation), 'word_with_blanks': word_with_blanks, 'is_bingo': is_bingo, 'newly_placed': newly_placed_details, 'start': start_pos, 'direction': orientation, 'turn_duration': 0.0, 'luck_factor': luck_factor};
                                     state['move_history'].append(move_data); state['current_replay_turn'] = len(state['move_history']); state['last_played_highlight_coords'] = newly_placed_coords
                                     state['first_play'] = False; state['consecutive_zero_point_turns'] = 0; state['pass_count'] = 0; state['exchange_count'] = 0; state['human_played'] = True; state['paused_for_power_tile'] = False; state['paused_for_bingo_practice'] = False; state['turn'] = 3 - state['turn']
@@ -6435,14 +6387,13 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                             current_r, current_c = None, None; typing_direction = None; typing_start = None
                             state['current_r'], state['current_c'] = None, None; state['typing_direction'] = None; state['typing_start'] = None
                     elif event.key == pygame.K_ESCAPE:
-                        # Close dialogs or cancel actions in order of precedence
+                        # ... (escape key handling - unchanged) ...
                         if state['exchanging']: state['exchanging'] = False; state['selected_tiles'].clear()
                         elif state['hinting']: state['hinting'] = False
                         elif state['showing_all_words']: state['showing_all_words'] = False
                         elif state['specifying_rack']: state['specifying_rack'] = False; state['specify_rack_inputs'] = ["", ""]; state['specify_rack_active_input'] = None; state['specify_rack_original_racks'] = [[], []]; state['confirming_override'] = False
                         elif state['showing_simulation_config']: state['showing_simulation_config'] = False; state['simulation_config_active_input'] = None
                         elif state['typing']:
-                            # Revert typing state
                             if state['original_tiles'] and state['original_rack']:
                                 for r_wp, c_wp, _ in state['word_positions']: state['tiles'][r_wp][c_wp] = state['original_tiles'][r_wp][c_wp]
                                 state['racks'][state['turn']-1] = state['original_rack'][:]
@@ -6456,11 +6407,11 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                         elif state['game_over_state']: pass # Don't close game over with Esc
                         elif state['showing_practice_end_dialog']: pass # Don't close practice end with Esc
                         else:
-                            # If nothing else is active, open the options dropdown
                             if not state['replay_mode'] and not state['game_over_state']:
                                 state['dropdown_open'] = True
             # --- Handle other KEYDOWN events (dialogs, global shortcuts) ---
             elif state['game_over_state'] and not state['is_batch_running']:
+                # ... (game over shortcuts - unchanged) ...
                 save_rect = drawn_rects.get('save_rect')
                 quit_rect = drawn_rects.get('quit_rect')
                 replay_rect = drawn_rects.get('replay_rect')
@@ -6948,10 +6899,6 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
                                     if drawn_tiles:
                                         drawn_leave_value = evaluate_leave_cython(drawn_tiles) # Use Cython
                                         remaining_before_draw = get_remaining_tiles(state['original_rack'], board_tile_counts, blanks_played_count) # Use original rack
-                                        pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw) # Uses Cython
-                                        expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
-                                        expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
-                                        luck_factor = drawn_leave_value - expected_draw_value_total
                                         drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
                                     move_data = {'player': state['turn'], 'move_type': 'place', 'rack': state['original_rack'], 'positions': [(t[0], t[1], t[2]) for t in primary_word_tiles], 'blanks': move_blanks_coords, 'score': score, 'word': primary_word_str, 'drawn': drawn_tiles, 'coord': get_coord(start_pos, orientation), 'word_with_blanks': word_with_blanks, 'is_bingo': is_bingo, 'newly_placed': newly_placed_details, 'start': start_pos, 'direction': orientation, 'turn_duration': 0.0, 'luck_factor': luck_factor}; # Removed pool_quality_before_draw
                                     state['move_history'].append(move_data); state['current_replay_turn'] = len(state['move_history']); state['last_played_highlight_coords'] = newly_placed_coords
@@ -7060,6 +7007,9 @@ def process_game_events(state, drawn_rects): # Added drawn_rects parameter
 
 
 
+# Function to Replace: handle_mouse_down_event (Complete)
+# REASON: Pass board_tile_counts and blanks_played_count to find_best_exchange_option when generating hints.
+
 def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects parameter
     """
     Handles MOUSEBUTTONDOWN events for the main game loop.
@@ -7083,7 +7033,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
     Adds specific debug prints for hint dialog exchange click.
     Fixes Play/Exchange button logic to handle selected exchange option.
     Corrects arguments passed to is_valid_play_cython for typed plays.
-    ADDED DEBUG PRINT for rack state after hint exchange.
+    Passes necessary arguments to find_best_exchange_option.
     """
     # --- Access global directly for GADDAG status check ---
     global gaddag_loading_status, GADDAG_STRUCTURE # Need GADDAG_STRUCTURE too
@@ -7196,6 +7146,7 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                     else:
                         player_idx = turn - 1; opponent_idx = 1 - player_idx; opponent_rack_len = len(racks[opponent_idx]) if opponent_idx < len(racks) else 7
                         print("  DEBUG: About to call run_ai_simulation...")
+                        # --- Use ONLY keyword arguments for the call ---
                         simulation_results = run_ai_simulation(
                             ai_rack=racks[player_idx],
                             opponent_rack_len=opponent_rack_len,
@@ -7211,17 +7162,25 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                             num_opponent_sims=num_opp_sim,          # Pass as keyword
                             num_post_sim_candidates=num_post_sim    # Pass as keyword
                         )
+                        # --- END Use ONLY keyword arguments ---
                         print("  DEBUG: run_ai_simulation finished.")
                         if simulation_results: top_sim_move = simulation_results[0]['move']; top_sim_score = simulation_results[0]['final_score']; print(f"  Simulate Button Top Sim Result: Play '{top_sim_move.get('word','N/A')}' (Sim Score: {top_sim_score:.1f})")
                         else: print("  Simulate Button: No valid simulation results found.")
                         hint_moves = simulation_results
 
+                        # --- Pass counts to find_best_exchange_option ---
                         print(f"  DEBUG: *** BEFORE Exchange Check. bag_count = {bag_count} ***")
                         if bag_count >= 1:
                             print("  DEBUG: Evaluating exchange option for hint dialog...")
                             current_player_rack = racks[player_idx]
-                            remaining_dict_for_exchange = get_remaining_tiles(current_player_rack, board_tile_counts, blanks_played_count)
-                            best_exchange_for_hint, best_exchange_score_for_hint = find_best_exchange_option(current_player_rack, remaining_dict_for_exchange, bag_count)
+                            # Pass board_tile_counts and blanks_played_count
+                            best_exchange_for_hint, best_exchange_score_for_hint = find_best_exchange_option(
+                                current_player_rack,
+                                board_tile_counts,   # Pass board counts
+                                blanks_played_count, # Pass blanks played count
+                                bag_count
+                            )
+                            # --- END Pass counts ---
                             if best_exchange_for_hint:
                                 print(f"  DEBUG: Best Exchange Option Found: {''.join(sorted(best_exchange_for_hint))} (Eval: {best_exchange_score_for_hint:.1f})")
                             else:
@@ -7478,13 +7437,10 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                 if not is_ai[turn-1]: racks[turn-1].sort(); bag.extend(tiles_to_exchange); random.shuffle(bag)
                                 luck_factor = 0.0
                                 if drawn_tiles:
-                                    drawn_leave_value = evaluate_leave_cython(drawn_tiles)
-                                    remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts, blanks_played_count)
-                                    pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
-                                    expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
-                                    expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
-                                    luck_factor = drawn_leave_value - expected_draw_value_total
-                                    drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
+                                    try:
+                                        luck_factor = calculate_luck_factor_cython(drawn_tiles, move_rack, board_tile_counts, blanks_played_count, get_remaining_tiles)
+                                        drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Luck (Cython): {luck_factor:+.2f}")
+                                    except Exception as e_luck: print(f"Error calling calculate_luck_factor_cython: {e_luck}"); luck_factor = 0.0
                                 move_history.append({'player': turn, 'move_type': 'exchange', 'rack': move_rack, 'exchanged_tiles': tiles_to_exchange, 'drawn': drawn_tiles, 'score': 0, 'word': '', 'coord': '', 'blanks': set(), 'positions': [], 'is_bingo': False, 'word_with_blanks': '', 'turn_duration': 0.0, 'luck_factor': luck_factor});
                                 current_replay_turn = len(move_history)
                                 exchanging = False; selected_tiles.clear(); consecutive_zero_point_turns += 1; exchange_count += 1; pass_count = 0; human_played = True; paused_for_power_tile = False; paused_for_bingo_practice = False; turn = 3 - turn; last_played_highlight_coords = set()
@@ -7522,44 +7478,30 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                 move_rack = racks[player_idx][:] # Rack BEFORE exchange
                                 new_rack = []
                                 exchange_counts_temp = Counter(tiles_to_exchange)
-                                # --- Build the new rack by keeping tiles NOT exchanged ---
                                 for tile in racks[player_idx]:
                                     if exchange_counts_temp.get(tile, 0) > 0:
-                                        exchange_counts_temp[tile] -= 1 # Decrement count of tile to exchange
+                                        exchange_counts_temp[tile] -= 1
                                     else:
-                                        new_rack.append(tile) # Keep this tile
-                                # --- Draw new tiles ---
+                                        new_rack.append(tile)
                                 num_to_draw = len(tiles_to_exchange)
                                 drawn_tiles = [bag.pop() for _ in range(num_to_draw) if bag]
                                 new_rack.extend(drawn_tiles)
-                                # --- Update the actual game state rack ---
                                 racks[player_idx] = new_rack
-
-                                # --- ADDED DEBUG PRINT ---
                                 print(f"  DEBUG: Rack after exchange & draw (Player {player_idx+1}): Size={len(racks[player_idx])}, Content={''.join(sorted(racks[player_idx]))}")
-                                # --- END DEBUG PRINT ---
-
-                                if not is_ai[player_idx]: racks[player_idx].sort() # Sort if human
-                                # --- Return exchanged tiles to bag ---
+                                if not is_ai[player_idx]: racks[player_idx].sort()
                                 bag.extend(tiles_to_exchange); random.shuffle(bag)
-                                # --- Calculate luck factor ---
                                 luck_factor = 0.0
                                 if drawn_tiles:
-                                    drawn_leave_value = evaluate_leave_cython(drawn_tiles)
-                                    remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts, blanks_played_count)
-                                    pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
-                                    expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
-                                    expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
-                                    luck_factor = drawn_leave_value - expected_draw_value_total
-                                    drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
-                                # --- Record history ---
+                                    try:
+                                        luck_factor = calculate_luck_factor_cython(drawn_tiles, move_rack, board_tile_counts, blanks_played_count, get_remaining_tiles)
+                                        drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Luck (Cython): {luck_factor:+.2f}")
+                                    except Exception as e_luck: print(f"Error calling calculate_luck_factor_cython: {e_luck}"); luck_factor = 0.0
                                 move_history.append({'player': turn, 'move_type': 'exchange', 'rack': move_rack, 'exchanged_tiles': tiles_to_exchange, 'drawn': drawn_tiles, 'score': 0, 'word': '', 'coord': '', 'blanks': set(), 'positions': [], 'is_bingo': False, 'word_with_blanks': '', 'turn_duration': 0.0, 'luck_factor': luck_factor})
                                 current_replay_turn = len(move_history)
-                                # --- Update game flow state ---
                                 hinting = False; consecutive_zero_point_turns += 1; exchange_count += 1; pass_count = 0; human_played = True; paused_for_power_tile = False; paused_for_bingo_practice = False; turn = 3 - turn; last_played_highlight_coords = set()
                             else:
                                 show_message_dialog("Cannot perform this exchange (not enough tiles in bag?).", "Exchange Error")
-                                hinting = False # Close hint dialog even on error
+                                hinting = False
                         elif 0 <= selected_hint_index < num_plays_shown:
                             print(f"DEBUG: Action -> PLAY")
                             selected_move = None; is_simulation_result = bool(hint_moves and isinstance(hint_moves[0], dict) and 'final_score' in hint_moves[0])
@@ -7587,16 +7529,13 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                         next_turn, drawn_tiles, newly_placed, board_tile_counts, blanks_played_count = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts, blanks_played_count);
                                         human_played = True; hinting = False; paused_for_power_tile = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; luck_factor = 0.0;
                                         if drawn_tiles:
-                                            drawn_leave_value = evaluate_leave_cython(drawn_tiles)
-                                            remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts, blanks_played_count)
-                                            pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
-                                            expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
-                                            expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
-                                            luck_factor = drawn_leave_value - expected_draw_value_total
-                                            drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
+                                            try:
+                                                luck_factor = calculate_luck_factor_cython(drawn_tiles, move_rack, board_tile_counts, blanks_played_count, get_remaining_tiles)
+                                                drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Luck (Cython): {luck_factor:+.2f}")
+                                            except Exception as e_luck: print(f"Error calling calculate_luck_factor_cython: {e_luck}"); luck_factor = 0.0
                                         move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'luck_factor': luck_factor});
                                         current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
-                                        updated_state.update({'turn': turn, 'human_played': human_played, 'hinting': hinting, 'paused_for_power_tile': paused_for_power_tile, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'tiles': tiles, 'blanks': blanks, 'scores': scores, 'board_tile_counts': board_tile_counts, 'practice_probability_max_index': practice_probability_max_index, 'blanks_played_count': blanks_played_count}) # Pack blanks_played_count
+                                        updated_state.update({'turn': turn, 'human_played': human_played, 'hinting': hinting, 'paused_for_power_tile': paused_for_power_tile, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'tiles': tiles, 'blanks': blanks, 'scores': scores, 'board_tile_counts': board_tile_counts, 'practice_probability_max_index': practice_probability_max_index, 'blanks_played_count': blanks_played_count})
                                         return updated_state
                                     else: show_message_dialog(f"This is not the highest scoring move with {current_power_tile} matching the selected lengths!", "Incorrect Move"); valid_for_practice = False
                                 elif paused_for_bingo_practice:
@@ -7605,30 +7544,35 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                         next_turn, drawn_tiles, newly_placed, board_tile_counts, blanks_played_count = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts, blanks_played_count);
                                         human_played = True; hinting = False; paused_for_bingo_practice = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; luck_factor = 0.0;
                                         if drawn_tiles:
-                                            drawn_leave_value = evaluate_leave_cython(drawn_tiles)
-                                            remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts, blanks_played_count)
-                                            pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
-                                            expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
-                                            expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
-                                            luck_factor = drawn_leave_value - expected_draw_value_total
-                                            drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
+                                            try:
+                                                luck_factor = calculate_luck_factor_cython(drawn_tiles, move_rack, board_tile_counts, blanks_played_count, get_remaining_tiles)
+                                                drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Luck (Cython): {luck_factor:+.2f}")
+                                            except Exception as e_luck: print(f"Error calling calculate_luck_factor_cython: {e_luck}"); luck_factor = 0.0
                                         move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'luck_factor': luck_factor});
                                         current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
-                                        updated_state.update({'turn': turn, 'human_played': human_played, 'hinting': hinting, 'paused_for_bingo_practice': paused_for_bingo_practice, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'tiles': tiles, 'blanks': blanks, 'scores': scores, 'board_tile_counts': board_tile_counts, 'practice_probability_max_index': practice_probability_max_index, 'blanks_played_count': blanks_played_count}) # Pack blanks_played_count
+                                        updated_state.update({'turn': turn, 'human_played': human_played, 'hinting': hinting, 'paused_for_bingo_practice': paused_for_bingo_practice, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'tiles': tiles, 'blanks': blanks, 'scores': scores, 'board_tile_counts': board_tile_counts, 'practice_probability_max_index': practice_probability_max_index, 'blanks_played_count': blanks_played_count})
                                         return updated_state
                                     else: show_message_dialog(f"This is not the highest scoring bingo! Max score is {max_bingo_score}.", "Incorrect Move"); valid_for_practice = False
+
+                                # --- Normal Play from Hint Dialog ---
                                 if valid_for_practice and practice_mode not in ["eight_letter"] and not paused_for_power_tile and not paused_for_bingo_practice:
                                     next_turn, drawn_tiles, newly_placed, board_tile_counts, blanks_played_count = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts, blanks_played_count);
                                     human_played = True; hinting = False; paused_for_power_tile = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0
                                     luck_factor = 0.0;
                                     if drawn_tiles:
-                                        drawn_leave_value = evaluate_leave_cython(drawn_tiles)
-                                        remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts, blanks_played_count)
-                                        pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
-                                        expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
-                                        expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
-                                        luck_factor = drawn_leave_value - expected_draw_value_total
-                                        drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
+                                        try:
+                                            luck_factor = calculate_luck_factor_cython(
+                                                drawn_tiles,
+                                                move_rack, # Use rack before play
+                                                board_tile_counts,
+                                                blanks_played_count,
+                                                get_remaining_tiles
+                                            )
+                                            drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles));
+                                            print(f"  Drew: {drawn_tiles_str}, Luck (Cython): {luck_factor:+.2f}")
+                                        except Exception as e_luck:
+                                            print(f"Error calling calculate_luck_factor_cython: {e_luck}")
+                                            luck_factor = 0.0
                                     move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'luck_factor': luck_factor});
                                     current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
                             elif is_simulation_result and not selected_move: show_message_dialog("Error retrieving move data from selected simulation result.", "Internal Error")
@@ -7688,13 +7632,10 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                     next_turn, drawn_tiles, newly_placed, board_tile_counts, blanks_played_count = play_hint_move(selected_move, tiles, racks, blanks, scores, player_who_played, bag, board, board_tile_counts, blanks_played_count);
                                     human_played = True; showing_all_words = False; paused_for_bingo_practice = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; luck_factor = 0.0;
                                     if drawn_tiles:
-                                        drawn_leave_value = evaluate_leave_cython(drawn_tiles)
-                                        remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts, blanks_played_count)
-                                        pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
-                                        expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
-                                        expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
-                                        luck_factor = drawn_leave_value - expected_draw_value_total
-                                        drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
+                                        try:
+                                            luck_factor = calculate_luck_factor_cython(drawn_tiles, move_rack, board_tile_counts, blanks_played_count, get_remaining_tiles)
+                                            drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Luck (Cython): {luck_factor:+.2f}")
+                                        except Exception as e_luck: print(f"Error calling calculate_luck_factor_cython: {e_luck}"); luck_factor = 0.0
                                     move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'luck_factor': luck_factor});
                                     current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
                                     updated_state.update({'turn': turn, 'human_played': human_played, 'showing_all_words': showing_all_words, 'paused_for_bingo_practice': paused_for_bingo_practice, 'consecutive_zero_point_turns': consecutive_zero_point_turns, 'pass_count': pass_count, 'exchange_count': exchange_count, 'move_history': move_history, 'current_replay_turn': current_replay_turn, 'last_played_highlight_coords': last_played_highlight_coords, 'racks': racks, 'bag': bag, 'tiles': tiles, 'blanks': blanks, 'scores': scores, 'board_tile_counts': board_tile_counts, 'practice_probability_max_index': practice_probability_max_index, 'blanks_played_count': blanks_played_count}) # Pack blanks_played_count
@@ -7705,13 +7646,10 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                 human_played = True; showing_all_words = False; paused_for_power_tile = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0
                                 luck_factor = 0.0;
                                 if drawn_tiles:
-                                    drawn_leave_value = evaluate_leave_cython(drawn_tiles)
-                                    remaining_before_draw = get_remaining_tiles(move_rack, board_tile_counts, blanks_played_count)
-                                    pool_analysis_before_draw = analyze_unseen_pool(remaining_before_draw)
-                                    expected_single_draw_value = pool_analysis_before_draw.get('expected_draw_value', 0.0)
-                                    expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
-                                    luck_factor = drawn_leave_value - expected_draw_value_total
-                                    drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Leave Value: {drawn_leave_value:.2f}, Luck: {luck_factor:+.2f}")
+                                    try:
+                                        luck_factor = calculate_luck_factor_cython(drawn_tiles, move_rack, board_tile_counts, blanks_played_count, get_remaining_tiles)
+                                        drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Luck (Cython): {luck_factor:+.2f}")
+                                    except Exception as e_luck: print(f"Error calling calculate_luck_factor_cython: {e_luck}"); luck_factor = 0.0
                                 move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'luck_factor': luck_factor});
                                 current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
                     elif all_words_ok_rect and all_words_ok_rect.collidepoint(x, y): clicked_in_dialog = True; showing_all_words = False
@@ -7790,16 +7728,14 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
 
 ###################################################
 
+# Function to Replace: check_and_handle_game_over
+# REASON: Remove specific print statements for silent batch mode.
+
 def check_and_handle_game_over(state):
     """
     Checks for game over conditions and handles the consequences.
     Updates and returns the game state dictionary.
-
-    Args:
-        state (dict): The current game state dictionary.
-
-    Returns:
-        dict: The potentially updated game state dictionary.
+    Removed specific prints for batch mode.
     """
     # Unpack necessary variables from state
     replay_mode = state['replay_mode']
@@ -7813,17 +7749,14 @@ def check_and_handle_game_over(state):
     initial_game_config = state['initial_game_config']
     player_names = state['player_names']
     move_history = state['move_history']
-    # Use current_game_initial_racks if available, else fall back to initial_racks
     current_game_initial_racks = state.get('current_game_initial_racks', state['initial_racks'])
     current_batch_game_num = state['current_batch_game_num']
     batch_results = state['batch_results']
-    # Constants can be accessed globally or retrieved from state if needed
-    # WINDOW_WIDTH, WINDOW_HEIGHT, DIALOG_WIDTH, DIALOG_HEIGHT
+    blanks_played_count = state.get('blanks_played_count', 0) # Unpack
 
     if not replay_mode and not game_over_state and practice_mode != "eight_letter":
         game_ended = False
         reason = ""
-        # Check rack existence before accessing
         rack0_exists = len(racks) > 0 and racks[0] is not None
         rack1_exists = len(racks) > 1 and racks[1] is not None
         rack0_empty = rack0_exists and not racks[0]
@@ -7837,7 +7770,9 @@ def check_and_handle_game_over(state):
             reason = "Six Consecutive Zero-Point Turns"
 
         if game_ended:
-            print(f"Game over triggered: {reason}")
+            # --- MODIFICATION: Remove Print ---
+            # print(f"Game over triggered: {reason}") # Removed
+            # --- END MODIFICATION ---
             final_scores = calculate_final_scores(scores, racks, bag)
             state['game_over_state'] = True
             state['final_scores'] = final_scores
@@ -7864,9 +7799,8 @@ def check_and_handle_game_over(state):
                 batch_prefix = initial_game_config.get('batch_filename_prefix', 'UNKNOWN-BATCH')
                 individual_gcg_filename = f"{batch_prefix}-GAME-{current_batch_game_num}.gcg"
                 try:
-                    # Ensure current_game_initial_racks is valid before saving
                     if not isinstance(current_game_initial_racks, list) or len(current_game_initial_racks) != 2:
-                         print(f"  ERROR: Invalid current_game_initial_racks for GCG save: {current_game_initial_racks}. Using empty racks.")
+                         print(f"  ERROR: Invalid current_game_initial_racks for GCG save: {current_game_initial_racks}. Using empty racks.") # Keep error
                          gcg_initial_racks = [[], []]
                     else:
                          gcg_initial_racks = current_game_initial_racks
@@ -7874,9 +7808,11 @@ def check_and_handle_game_over(state):
                     gcg_content = save_game_to_gcg(player_names, move_history, gcg_initial_racks, final_scores)
                     with open(individual_gcg_filename, "w") as f_gcg:
                         f_gcg.write(gcg_content)
-                    print(f"  Saved individual game GCG: {individual_gcg_filename}")
+                    # --- MODIFICATION: Remove Print ---
+                    # print(f"  Saved individual game GCG: {individual_gcg_filename}") # Removed
+                    # --- END MODIFICATION ---
                 except Exception as e:
-                    print(f"  ERROR saving individual game GCG '{individual_gcg_filename}': {e}")
+                    print(f"  ERROR saving individual game GCG '{individual_gcg_filename}': {e}") # Keep error
                     individual_gcg_filename = "SAVE_ERROR" # Mark as error for stats
 
                 game_stats = collect_game_stats(current_batch_game_num, player_names, final_scores, move_history, individual_gcg_filename)
@@ -7884,6 +7820,8 @@ def check_and_handle_game_over(state):
                 state['batch_results'] = batch_results # Update state
                 state['running_inner'] = False # End the inner loop for this batch game
 
+    # Pack back potentially modified blanks_played_count (although not modified here)
+    state['blanks_played_count'] = blanks_played_count
     return state # Return the modified state dictionary
 
 
