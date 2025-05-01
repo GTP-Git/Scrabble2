@@ -2,6 +2,10 @@ To-Do List
 
 -- Get Save/Load working (works now when I load a saved game in my program, but not when I load into, say, Quackle
 
+-- Create a Save format .SGS (Scrabble Game Special) that contains rack info. Or, use the Woogles format.
+
+-- In Batch mode, we do want to print out the optimal line, I think.
+
 -- When a game is loaded, the move replay is accurate, but the racks are simply simulated guesses, and do not reflect the actual racks. Because the Options button doesn't work in Replay mode because it conflicts with the replay controls, the user can't specify a rack to match the acutal game, if known.
 
 -- In Replay mode, like Woogles does, show the best move that was available, the move the human played, the equity difference, and the running and total equity lost/gained.
@@ -9,6 +13,10 @@ To-Do List
 -- Need a way for the user to stop batch games and AI simulation process. Maybe add button to this effect. Need listeners for it.
 
 -- Power Tiles game over dialog should have a Main button, and the Play Again button should re-run the Power Tiles mode.
+
+-- In Power Tiles mode, the rack with the power tile on it should be alphabetized
+
+-- Will games coded in Python on Mac run on Windows?
 
 -- Can the AI figure out how to make set-up plays?
 
