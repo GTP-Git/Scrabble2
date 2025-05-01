@@ -1,5 +1,6 @@
 
-# 30APR25 V5
+
+#Scrabble 01MAY25 Cython V5
 
 # gaddag_cython.pyx
 # cython: language_level=3
