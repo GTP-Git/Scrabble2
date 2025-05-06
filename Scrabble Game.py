@@ -1,7 +1,8 @@
 
 
+
 #python
-#Scrabble 01MAY25 Cython V5
+#Scrabble 06MAY25 Cython V5
 
 
 # Part 1
@@ -7055,23 +7056,144 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                         if tile_idx is not None and not dragged_tile and is_human_turn_or_paused_practice:
                             dragged_tile = (turn, tile_idx); drag_pos = (x, y);
                             tile_abs_x = rack_start_x_calc + tile_idx * (TILE_WIDTH + TILE_GAP); tile_center_x = tile_abs_x + TILE_WIDTH // 2; tile_center_y = rack_y_drag + TILE_HEIGHT // 2; drag_offset = (x - tile_center_x, y - tile_center_y)
-                    # --- Board Click ---
-                    elif not dragged_tile and is_human_turn_or_paused_practice:
-                        col = (x - 40) // SQUARE_SIZE; row = (y - 40) // SQUARE_SIZE
-                        if 0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE and not tiles[row][col]:
-                            is_double_click = (last_left_click_pos == (row, col) and current_time - last_left_click_time < DOUBLE_CLICK_TIME)
-                            if is_double_click:
-                                 selected_square = None; typing = False; current_r = None; current_c = None
-                                 if word_positions and original_tiles and original_rack:
-                                      for r_wp, c_wp, _ in word_positions: tiles[r_wp][c_wp] = original_tiles[r_wp][c_wp]
-                                      racks[turn-1] = original_rack[:];
-                                      if not is_ai[turn-1]: racks[turn-1].sort()
-                                      blanks_to_remove = set((r_wp, c_wp) for r_wp, c_wp, _ in word_positions if (r_wp, c_wp) in blanks); blanks.difference_update(blanks_to_remove); word_positions = []; original_tiles = None; original_rack = None
-                            elif selected_square is None or selected_square[:2] != (row, col): selected_square = (row, col, "right"); typing = False; word_positions = []; current_r = None; current_c = None
-                            elif selected_square[2] == "right": selected_square = (row, col, "down")
-                            elif selected_square[2] == "down": selected_square = None; current_r = None; current_c = None
-                            last_left_click_pos = (row, col); last_left_click_time = current_time
-                        else: selected_square = None; current_r = None; current_c = None
+
+
+                    # <<< --- START REPLACEMENT/INSERTED BLOCK (Board Click Logic) --- >>>
+
+                    # --- Pre-Check Debug Prints ---
+                    is_human_turn_or_paused_practice_board = False # Use separate variable for this check
+                    if 0 <= turn - 1 < len(is_ai):
+                         is_human_turn_or_paused_practice_board = not is_ai[turn-1] or paused_for_power_tile or paused_for_bingo_practice
+
+                    potential_col = (x - 40) // SQUARE_SIZE
+                    potential_row = (y - 40) // SQUARE_SIZE
+                    is_on_board = (40 <= x < 40 + GRID_SIZE * SQUARE_SIZE and 40 <= y < 40 + GRID_SIZE * SQUARE_SIZE)
+
+                    print(f"[HANDLE_CLICK PRE-CHECK] Turn={turn}, is_human_or_paused={is_human_turn_or_paused_practice_board}, click_pos=({x},{y}), is_on_board={is_on_board}, potential_coord=({potential_row},{potential_col})") # Keep
+
+                    if is_on_board and is_human_turn_or_paused_practice_board:
+                        if 0 <= potential_row < GRID_SIZE and 0 <= potential_col < GRID_SIZE:
+                            if tiles and 0 <= potential_row < len(tiles) and 0 <= potential_col < len(tiles[potential_row]):
+                                tile_val_pre_check = tiles[potential_row][potential_col]
+                                print(f"[HANDLE_CLICK PRE-CHECK] Value of tiles[{potential_row}][{potential_col}] = {repr(tile_val_pre_check)}") # Keep
+                            else:
+                                print(f"[HANDLE_CLICK PRE-CHECK] ERROR: Invalid 'tiles' structure or index ({potential_row},{potential_col})") # Keep
+                        else:
+                             print(f"[HANDLE_CLICK PRE-CHECK] Calculated potential coords ({potential_row},{potential_col}) out of GRID_SIZE bounds.") # Keep
+                    # --- End Pre-Check Debug Prints ---
+
+                    # --- Board Click (MINIMAL DEBUG VERSION + TOGGLE LOGIC) ---
+                    # Check if the click was actually on the board and valid turn *again*, and NOT a drag
+                    if is_on_board and is_human_turn_or_paused_practice_board and not state.get('dragged_tile'):
+                        col = potential_col # Use already calculated col
+                        row = potential_row # Use already calculated row
+                        print(f"[HANDLE_CLICK] In board click logic block for: ({row},{col})") # Keep
+
+                        # 1. BOUNDS CHECK (already partially done by is_on_board)
+                        if 0 <= row < GRID_SIZE and 0 <= col < GRID_SIZE:
+                            # 2. EMPTY CHECK
+                            tile_value = '' # Default
+                            if tiles and 0 <= row < len(tiles) and 0 <= col < len(tiles[row]):
+                                tile_value = tiles[row][col]
+                            else:
+                                print(f"  [HANDLE_CLICK] ERROR: Invalid 'tiles' structure or index ({row},{col}) during empty check") # Keep
+
+                            if tile_value == '': # Check if EMPTY
+                                print(f"[HANDLE_CLICK] Square ({row},{col}) IS empty.") # Keep
+
+                                # <<< --- START Toggle/Select Logic --- >>>
+                                current_selection = state.get('selected_square') # Get current selection state
+
+                                if current_selection and current_selection[:2] == (row, col):
+                                    # Clicked on the ALREADY selected square
+                                    if current_selection[2] == 'right':
+                                        # Toggle from right to down
+                                        print(f"  >>> Toggling direction at ({row},{col}) to DOWN.") # Keep
+                                        updated_state['selected_square'] = (row, col, 'down')
+                                        # Reset typing state as direction changes
+                                        updated_state['typing'] = False
+                                        updated_state['word_positions'] = []
+                                        updated_state['current_r'] = None
+                                        updated_state['current_c'] = None
+                                        updated_state['original_tiles'] = None
+                                        updated_state['original_rack'] = None
+                                        # (Revert logic handled by state reset + redraw)
+
+                                    else: # Currently 'down', second click deselects
+                                        print(f"  >>> Clicked selected square ({row},{col}) while DOWN. Clearing selection.") # Keep
+                                        updated_state['selected_square'] = None
+                                        # Reset typing state
+                                        updated_state['typing'] = False
+                                        updated_state['word_positions'] = []
+                                        updated_state['current_r'] = None
+                                        updated_state['current_c'] = None
+                                        updated_state['original_tiles'] = None
+                                        updated_state['original_rack'] = None
+                                        # (Revert logic handled by state reset + redraw)
+
+                                else:
+                                    # Clicked on a NEW empty square
+                                    print(f"  >>> Selecting NEW square ({row},{col}) with direction RIGHT.") # Keep
+                                    updated_state['selected_square'] = (row, col, 'right') # Initial selection is 'right'
+                                    # Reset typing state
+                                    updated_state['typing'] = False
+                                    updated_state['word_positions'] = []
+                                    updated_state['current_r'] = None
+                                    updated_state['current_c'] = None
+                                    updated_state['original_tiles'] = None
+                                    updated_state['original_rack'] = None
+                                    # (Revert logic handled by state reset + redraw)
+
+                                print(f"!!! [HANDLE_CLICK] Setting updated_state['selected_square'] = {updated_state.get('selected_square')} !!!") # Keep
+                                # <<< --- END Toggle/Select Logic --- >>>
+
+                            else:
+                                # Clicked on an OCCUPIED square
+                                print(f"[HANDLE_CLICK] Square ({row},{col}) is NOT empty ('{tile_value}'). Clearing selection.") # Keep
+                                updated_state['selected_square'] = None # Clear selection if occupied
+                                updated_state['typing'] = False
+                                # Revert typing state if clicking occupied while typing somehow occurred
+                                if state.get('typing') and state.get('original_tiles') and state.get('original_rack'):
+                                     # Revert typing state if clicking occupied while typing somehow occurred
+                                    temp_tiles_copy = [list(r) for r in state['tiles']]
+                                    temp_rack_copy = state['racks'][turn-1][:]
+                                    temp_blanks_copy = state['blanks'].copy()
+                                    wp = state.get('word_positions', [])
+                                    ot = state.get('original_tiles')
+                                    ora = state.get('original_rack')
+                                    if wp and ot and ora:
+                                        for r_wp, c_wp, _ in wp:
+                                            if 0 <= r_wp < GRID_SIZE and 0 <= c_wp < GRID_SIZE:
+                                                temp_tiles_copy[r_wp][c_wp] = ot[r_wp][c_wp]
+                                        temp_rack_copy = ora[:]
+                                        if not is_ai[turn-1]: temp_rack_copy.sort()
+                                        blanks_to_remove = set((r_wp, c_wp) for r_wp, c_wp, _ in wp if (r_wp, c_wp) in temp_blanks_copy)
+                                        temp_blanks_copy.difference_update(blanks_to_remove)
+                                        updated_state['tiles'] = temp_tiles_copy
+                                        new_racks_state = [r[:] for r in state['racks']]
+                                        new_racks_state[turn-1] = temp_rack_copy
+                                        updated_state['racks'] = new_racks_state
+                                        updated_state['blanks'] = temp_blanks_copy
+                                updated_state['word_positions'] = []
+                                updated_state['original_tiles'] = None
+                                updated_state['original_rack'] = None
+                                updated_state['current_r'] = None
+                                updated_state['current_c'] = None
+                                updated_state['typing_direction'] = None
+                                updated_state['typing_start'] = None
+
+                            # Update last click time regardless if it was on the board
+                            updated_state['last_left_click_pos'] = (row, col)
+                            updated_state['last_left_click_time'] = current_time
+
+                            # IMPORTANT: Return immediately after handling a potential board click
+                            print(f"[HANDLE_CLICK] Returning updated_state after board click attempt: {updated_state}") # Keep
+                            return updated_state # Return changes from board click
+                        # --- END MINIMAL BOARD CLICK ---
+
+                    # <<< --- END REPLACEMENT/INSERTED BLOCK --- >>>
+
+
 
                 # --- Handle clicks within dialogs (Exchange, Hint, All Words) ---
                 elif exchanging:
