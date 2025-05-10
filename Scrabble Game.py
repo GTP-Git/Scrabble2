@@ -2,7 +2,7 @@
 
 
 #python
-#Scrabble 06MAY25 Cython V5
+#Scrabble 09MAY25 Cython V5
 
 
 # Part 1
@@ -364,6 +364,12 @@ tiles = None
 racks = None
 blanks = None
 scores = None
+final_scores = None
+is_loaded_game = False
+game_over_state = False
+restart_practice_mode = False
+return_to_mode_selection = False
+replay_initial_shuffled_bag = None
 turn = 1
 first_play = True
 game_mode = None
@@ -451,210 +457,86 @@ def draw_checkbox(screen, x, y, checked):
         pygame.draw.line(screen, BLACK, (x+18, y+2), (x+2, y+18), 2)
 
 
-# --- GCG Handling ---
-def save_game_to_gcg(player_names, move_history, initial_racks, final_scores):
-    """Save the game to GCG format using move_history directly."""
-    gcg_lines = [
-        "#",
-        f"#player1 {player_names[0]}",
-        f"#player2 {player_names[1]}"
-    ]
-    cumulative_scores = [0, 0]
-
-    for move in move_history:
-        player = move['player'] - 1  # 0-based index
-        rack = ''.join(sorted(tile if tile != ' ' else '?' for tile in move['rack']))
-
-        if move['move_type'] == 'place':
-            # Use the stored full word with blanks
-            word_with_blanks = move.get('word_with_blanks', move.get('word','').upper()) # Use getter for safety
-            score = move['score']
-            cumulative_scores[player] += score
-            gcg_lines.append(
-                f">{player_names[player]}: {rack} {move['coord']} {word_with_blanks} +{score} {cumulative_scores[player]}"
-            )
-        elif move['move_type'] == 'exchange':
-            exchanged = ''.join(sorted(tile if tile != ' ' else '?' for tile in move.get('exchanged_tiles',[]))) # Use getter
-            gcg_lines.append(
-                f">{player_names[player]}: {rack} ({exchanged}) +0 {cumulative_scores[player]}"
-            )
-        elif move['move_type'] == 'pass':
-            gcg_lines.append(
-                f">{player_names[player]}: {rack} -- +0 {cumulative_scores[player]}"
-            )
-
-    gcg_lines.append(f"Final score: {player_names[0]} {final_scores[0]}, {player_names[1]} {final_scores[1]}")
-
-    return '\n'.join(gcg_lines)
 
 
 
-def load_game_from_gcg(filename):
-    """Load a game from a GCG file, returning data to enter replay mode."""
-    move_history = []
-    player_names = ["Player1", "Player2"]
-    # Initialize final_scores here ---
-    final_scores = [0, 0]
-    
-    line_num = 0
+def save_game_to_sgs(filename, game_data_dict):
+    """
+    Saves comprehensive game data to a file using pickle.
 
+    Args:
+        filename (str): The name of the file to save to (should end in .sgs).
+        game_data_dict (dict): A dictionary containing all game state to be saved.
+                               Expected keys include:
+                               - 'player_names', 'game_mode', 'is_ai', 'practice_mode',
+                               - 'use_endgame_solver_setting', 'use_ai_simulation_setting',
+                               - 'initial_shuffled_bag_order_sgs', 'initial_racks_sgs',
+                               - 'move_history', 'final_scores',
+                               - 'sgs_version', 'timestamp'
+    Returns:
+        bool: True if saving was successful, False otherwise.
+    """
     try:
-        with open(filename, "r") as f:
-            for line in f:
-                line_num += 1
-                line = line.strip()
-                if not line or line.startswith("#"): # Skip empty/comments
-                    if line.startswith("#player1"):
-                        try: player_names[0] = line.split(maxsplit=1)[1]
-                        except IndexError: print(f"GCG Load Warning (Line {line_num}): Malformed #player1 line.")
-                    elif line.startswith("#player2"):
-                        try: player_names[1] = line.split(maxsplit=1)[1]
-                        except IndexError: print(f"GCG Load Warning (Line {line_num}): Malformed #player2 line.")
-                    continue
-
-                if line.startswith("Final score:"):
-                    try:
-                        parts = line.split()
-                        if len(parts) < 5: # Need at least "Final score: N1 S1, N2 S2"
-                            raise ValueError("Too few parts for Final score line")
-
-                        # More robust parsing from the end ---
-                        score2_str = parts[-1]
-                        score1_str = ""
-                        # Find the part before score2 that ends with a comma
-                        for i in range(len(parts) - 2, 0, -1):
-                            if parts[i].endswith(','):
-                                score1_str = parts[i].strip(',')
-                                break # Found score1 part
-
-                        if score1_str and score2_str.isdigit() and score1_str.isdigit():
-                            # Successfully found both scores
-                            final_scores[0] = int(score1_str)
-                            final_scores[1] = int(score2_str)
-                            print(f"GCG Load Info (Line {line_num}): Parsed final scores: {final_scores}")
-                        else:
-                            # Fallback or less reliable method if needed, but better to raise error
-                            raise ValueError("Could not reliably parse final scores from line parts.")
-                        
-
-                    except (IndexError, ValueError) as e:
-                        print(f"GCG Load Warning (Line {line_num}): Error parsing final score line: '{line}'. Error: {e}. Using [0, 0].")
-                        # Keep final_scores as [0, 0] initialized earlier
-                    continue # Move to next line after processing Final score
-
-                if line.startswith(">"):
-                    try:
-                        parts = line.split() # Split by whitespace
-                        if len(parts) < 5: # Minimum parts: >Name: Rack -- +Score CumScore
-                            raise ValueError(f"Insufficient parts on move line ({len(parts)})")
-
-                        # --- Robust Parsing Logic ---
-                        # 1. Identify parts from the end
-                        cumulative_score_str = parts[-1]
-                        score_str = parts[-2]
-                        # Part before score could be Word, (Exchange), or --
-                        third_last_part = parts[-3]
-
-                        # 2. Safely parse scores first
-                        try: score = int(score_str[1:]) # Remove initial '+' or '-'
-                        except (ValueError, IndexError): raise ValueError(f"Invalid score format '{score_str}'")
-                        try: cumulative_score = int(cumulative_score_str)
-                        except ValueError: raise ValueError(f"Invalid cumulative score format '{cumulative_score_str}'")
-
-                        # 3. Determine Move Type based on third_last_part
-                        move_type = None
-                        player_name_parts = []
-                        rack_str = ""
-                        exchanged_list = []
-                        position_str = ""
-                        word_played_gcg = ""
-
-                        if third_last_part == "--": # Pass
-                            move_type = 'pass'
-                            # Structure: > Name(s) : Rack -- +Score CumScore
-                            if len(parts) < 5: raise ValueError("Incorrect part count for Pass")
-                            rack_str = parts[-4] # Part before -- is Rack
-                            player_name_parts = parts[:-4] # All parts before Rack
-                        elif third_last_part.startswith("(") and third_last_part.endswith(")"): # Exchange
-                            move_type = 'exchange'
-                            # Structure: > Name(s) : Rack (Exch) +Score CumScore
-                            if len(parts) < 5: raise ValueError("Incorrect part count for Exchange")
-                            rack_str = parts[-4] # Part before (Exch) is Rack
-                            player_name_parts = parts[:-4] # All parts before Rack
-                            exchanged_gcg = third_last_part[1:-1]
-                            exchanged_list = [(' ' if char == '?' else char.upper()) for char in exchanged_gcg]
-                        else: # Place
-                            move_type = 'place'
-                            # Structure: > Name(s) : Rack Coord Word +Score CumScore
-                            if len(parts) < 6: raise ValueError("Incorrect part count for Place")
-                            word_played_gcg = third_last_part # Part before score is Word
-                            position_str = parts[-4] # Part before Word is Coord
-                            rack_str = parts[-5] # Part before Coord is Rack
-                            player_name_parts = parts[:-5] # All parts before Rack
-
-                        # 4. Reconstruct Player Name
-                        if not player_name_parts or not player_name_parts[0].startswith(">") or not player_name_parts[-1].endswith(":"):
-                            raise ValueError(f"Could not reconstruct player name from parts: {player_name_parts}")
-                        player_name_full = " ".join(player_name_parts)
-                        player_name = player_name_full[1:-1] # Remove '>' and ':'
-                        player = 1 if player_name == player_names[0] else 2
-                        # --- End Robust Parsing Logic ---
-
-                        # Append to move_history based on type
-                        if move_type == 'pass':
-                            move_history.append({
-                                'player': player, 'move_type': 'pass', 'score': score,
-                                'word': '', 'coord': ''
-                            })
-                        elif move_type == 'exchange':
-                            move_history.append({
-                                'player': player, 'move_type': 'exchange', 'exchanged_tiles': exchanged_list,
-                                'score': score, 'word': '', 'coord': ''
-                            })
-                        elif move_type == 'place':
-                            # Parse coordinate
-                            coord_parse_result = parse_coord(position_str)
-                            if coord_parse_result is None or coord_parse_result[0] is None:
-                                raise ValueError(f"Invalid coordinate format '{position_str}'")
-                            (row, col), direction = coord_parse_result
-
-                            # Reconstruct positions and blanks from the GCG word
-                            positions = []; blanks = set()
-                            current_r_gcg, current_c_gcg = row, col
-                            for i, letter_gcg in enumerate(word_played_gcg):
-                                r_place = current_r_gcg if direction == "right" else current_r_gcg + i
-                                c_place = current_c_gcg + i if direction == "right" else current_c_gcg
-                                if not (0 <= r_place < GRID_SIZE and 0 <= c_place < GRID_SIZE):
-                                    raise ValueError(f"Word placement out of bounds: '{word_played_gcg}' at {position_str}")
-                                letter_upper = letter_gcg.upper()
-                                positions.append((r_place, c_place, letter_upper))
-                                if letter_gcg.islower(): blanks.add((r_place, c_place))
-
-                            move_history.append({
-                                'player': player, 'move_type': 'place', 'positions': positions,
-                                'blanks': blanks, 'score': score, 'word': word_played_gcg.upper(),
-                                'start': (row, col), 'direction': direction, 'coord': position_str
-                            })
-
-                    except Exception as e:
-                        print(f"GCG Load Error (Line {line_num}): Failed to parse move line.")
-                        print(f"  Line content: '{line}'")
-                        print(f"  Error details: {type(e).__name__}: {e}")
-                        raise ValueError(f"Error parsing GCG line {line_num}: {e}") from e
-
-                else:
-                    print(f"GCG Load Warning (Line {line_num}): Skipping unrecognized line format: '{line}'")
-
-    except FileNotFoundError:
-        print(f"GCG Load Error: File not found '{filename}'")
-        raise
+        with open(filename, "wb") as f_sgs:
+            pickle.dump(game_data_dict, f_sgs)
+        print(f"--- Game successfully saved to {filename} (SGS format) ---")
+        return True
     except Exception as e:
-        print(f"GCG Load Error: An unexpected error occurred reading file '{filename}' near line {line_num}.")
-        print(f"  Error details: {type(e).__name__}: {e}")
-        raise
+        print(f"--- Error saving game to SGS file '{filename}': {e} ---")
+        traceback.print_exc()
+        return False
 
-    # Return the final scores that were parsed (or [0,0] if parsing failed/line missing)
-    return player_names, move_history, final_scores
+
+
+
+
+# (Place this function alongside other save/load utility functions like load_game_from_gcg)
+
+def load_game_from_sgs(filename):
+    """
+    Loads comprehensive game data from an SGS file using pickle.
+
+    Args:
+        filename (str): The name of the .sgs file to load.
+
+    Returns:
+        dict or None: A dictionary containing the loaded game state,
+                      or None if loading fails.
+    """
+    try:
+        with open(filename, "rb") as f_sgs:
+            game_data_dict = pickle.load(f_sgs)
+        print(f"--- Game successfully loaded from {filename} (SGS format) ---")
+        # Basic validation (can be expanded)
+        if not isinstance(game_data_dict, dict):
+            print(f"--- Error: Loaded SGS data from '{filename}' is not a dictionary. ---")
+            return None
+        if 'sgs_version' not in game_data_dict or 'move_history' not in game_data_dict:
+            print(f"--- Error: Loaded SGS data from '{filename}' is missing essential keys. ---")
+            return None
+        return game_data_dict
+    except FileNotFoundError:
+        print(f"--- Error: SGS file not found '{filename}' ---")
+        return None
+    except pickle.UnpicklingError:
+        print(f"--- Error: Could not unpickle SGS file '{filename}'. File may be corrupted or not a valid SGS file. ---")
+        return None
+    except Exception as e:
+        print(f"--- Error loading game from SGS file '{filename}': {e} ---")
+        traceback.print_exc()
+        return None
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1249,87 +1131,115 @@ def is_word_length_allowed(word_len, number_checks):
 
 
 # Function to Replace: mode_selection_screen
-# REASON: Store max_index from eight_letter_practice.
-
+# REASON: Store max_index from eight_letter_practice. Ensure return tuple has correct length. Add debug print.
 def mode_selection_screen():
-    """Display and handle the game mode selection screen, including Load Game via text input and Developer Tools."""
-    print("--- mode_selection_screen() entered ---")
-    global main_called
-    global pyperclip_available, pyperclip
+    """Displays the mode selection screen and handles user input."""
+    global DEVELOPER_PROFILE_ENABLED # Allow modification if cProfile is checked
 
-    try:
-        print("--- mode_selection_screen(): Attempting to load background image... ---")
-        image = pygame.image.load("Scrabble_S.png").convert_alpha(); content_width = WINDOW_WIDTH - 200; image = pygame.transform.scale(image, (content_width, WINDOW_HEIGHT)); image.set_alpha(128); content_left = (WINDOW_WIDTH - content_width) // 2
-        print("--- mode_selection_screen(): Background image loaded and processed. ---")
+    # --- Initialization ---
+    try: # Load background image
+        image = pygame.image.load("Scrabble_S.png").convert_alpha()
+        # Scale image to fit width while maintaining aspect ratio (approx)
+        # Or scale to fit available content area
+        content_width = WINDOW_WIDTH - 200 # Example: leave 100px padding on each side
+        image = pygame.transform.scale(image, (content_width, WINDOW_HEIGHT)) # Adjust height as needed or calc based on aspect ratio
+        image.set_alpha(128) # Make it semi-transparent
+        content_left = (WINDOW_WIDTH - content_width) // 2
     except pygame.error as e:
-        print(f"--- mode_selection_screen(): WARNING - Could not load background image 'Scrabble_S.png': {e} ---")
-        image = None; content_width = WINDOW_WIDTH; content_left = 0
+        print(f"--- mode_selection_screen(): Error loading background image: {e} ---")
+        image = None
+        content_width = WINDOW_WIDTH # Use full width if no image
+        content_left = 0
 
-    modes = [MODE_HVH, MODE_HVA, MODE_AVA]; selected_mode = None; player_names = ["Player 1", "Player 2"]; human_player = 1; input_active = [False, False]; current_input = 0
-    practice_mode = None; dropdown_open = False; showing_power_tiles_dialog = False
-    letter_checks = [True, True, True, True] # J, Q, X, Z
-    number_checks = [True, True, True, True, False, False] # 2, 3, 4, 5, 6, 7+
-    practice_state = None
-    loaded_game_data = None
+    print("--- mode_selection_screen() entered ---")
+    if image: print("--- mode_selection_screen(): Background image loaded and processed. ---")
+
+    modes = [MODE_HVH, MODE_HVA, MODE_AVA]
+    selected_mode = None
+    player_names = ["Player 1", "Player 2"]
+    human_player = 1 # Default for HVA
+    input_active = [False, False] # Which name input is active
+    current_input = 0 # Index of the currently selected mode button
+
+    # Practice Mode State
+    practice_mode = None
+    dropdown_open = False
+    showing_power_tiles_dialog = False
+    letter_checks = [True, True, True, True] # J, Q, X, Z (Power Tiles defaults)
+    number_checks = [True, True, True, True, False, False] # 2, 3, 4, 5, 6, 7+ (Power Tiles defaults)
+    practice_state = None # To store pre-configured state for some practice modes
+    practice_probability_max_index = None # <<< MODIFICATION: Initialize here
+
+    # Loaded Game State
+    loaded_game_data = None # Will store data loaded from SGS
+
+    # AI Settings
     use_endgame_solver_checked = False
     use_ai_simulation_checked = False
 
     # State for Load Game Text Input
-    showing_load_input = False; load_filename_input = ""; load_input_active = False
-    load_confirm_button_rect = None; load_input_rect = None; load_cancel_button_rect = None
+    showing_load_input = False
+    load_filename_input = ""
+    load_input_active = False
+    load_confirm_button_rect = None
+    load_input_rect = None
+    load_cancel_button_rect = None
 
     # Developer Tools State
     showing_dev_tools_dialog = False
     visualize_batch_checked = False # Default to False (unchecked)
-    cprofile_checked = False # <<< ADDED: cProfile state, default False
+    cprofile_checked = False # Default False
     dev_tools_visualize_rect = None # Rect for checkbox click detection
-    dev_tools_cprofile_rect = None # <<< ADDED: Rect for cProfile checkbox
+    dev_tools_cprofile_rect = None # Rect for cProfile checkbox
     dev_tools_close_rect = None # Rect for close button click detection
 
     print("--- mode_selection_screen(): Entering main loop (while selected_mode is None:)... ---")
-    loop_count = 0
+    loop_count = 0 # Debug counter
     while selected_mode is None:
         loop_count += 1
-        pygame.event.pump()
-
         # --- Define positions INSIDE the loop ---
-        option_rects = []
-        name_rect_x = content_left + (content_width - 200) // 2
+        # This allows recalculation if window size changes (though not currently supported)
+        option_rects = [] # For practice dropdown
+        name_rect_x = content_left + (content_width - 200) // 2 # Center name inputs within content area
 
         # Button Positions (Bottom Row)
         play_later_rect = pygame.Rect(WINDOW_WIDTH - BUTTON_WIDTH - 10, WINDOW_HEIGHT - BUTTON_HEIGHT - 10, BUTTON_WIDTH, BUTTON_HEIGHT)
         load_game_button_rect = pygame.Rect(play_later_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
         batch_game_button_rect = pygame.Rect(load_game_button_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
         start_game_button_rect = pygame.Rect(batch_game_button_rect.left - BUTTON_GAP - BUTTON_WIDTH, play_later_rect.top, BUTTON_WIDTH, BUTTON_HEIGHT)
+
+        # Developer Tools Button (Bottom Left)
         dev_tools_button_width = 120 # Slightly wider for text
         dev_tools_button_rect = pygame.Rect(
             10, # Left edge padding
             play_later_rect.top, # Align vertically with other bottom buttons
-            dev_tools_button_width,
-            BUTTON_HEIGHT
+            dev_tools_button_width, BUTTON_HEIGHT
         )
 
         # Calculate Load Input Field/Button Positions unconditionally
-        load_input_width = 300; load_input_x = load_game_button_rect.left; load_input_y = load_game_button_rect.top - BUTTON_GAP - BUTTON_HEIGHT
+        load_input_width = 300
+        load_input_x = load_game_button_rect.left
+        load_input_y = load_game_button_rect.top - BUTTON_GAP - BUTTON_HEIGHT
         load_input_rect = pygame.Rect(load_input_x, load_input_y, load_input_width, BUTTON_HEIGHT)
         load_confirm_button_rect = pygame.Rect(load_input_x + load_input_width + BUTTON_GAP, load_input_y, BUTTON_WIDTH, BUTTON_HEIGHT)
         load_cancel_button_rect = pygame.Rect(load_confirm_button_rect.right + BUTTON_GAP, load_input_y, BUTTON_WIDTH, BUTTON_HEIGHT)
 
         # Calculate Checkbox Positions
-        last_mode_button_y = 100 + (len(modes) - 1) * 60 + BUTTON_HEIGHT
+        # Position checkboxes below the mode buttons
+        last_mode_button_y = 100 + (len(modes) - 1) * 60 + BUTTON_HEIGHT # Y-coord of bottom of last mode button
         checkbox_x_base = content_left + (content_width - 250) // 2 # Approx center alignment
         checkbox_gap = 25 # Vertical gap between checkboxes
 
         # Endgame Solver Checkbox Position
         endgame_checkbox_x = checkbox_x_base
-        endgame_checkbox_y = last_mode_button_y + 20
+        endgame_checkbox_y = last_mode_button_y + 20 # Space below mode buttons
         endgame_checkbox_rect = pygame.Rect(endgame_checkbox_x, endgame_checkbox_y, 20, 20)
         endgame_label_x = endgame_checkbox_x + 25
-        endgame_label_y = endgame_checkbox_y + 2
+        endgame_label_y = endgame_checkbox_y + 2 # Align text vertically with checkbox
 
         # AI Simulation Checkbox Position
         simulation_checkbox_x = checkbox_x_base
-        simulation_checkbox_y = endgame_checkbox_y + checkbox_gap
+        simulation_checkbox_y = endgame_checkbox_y + checkbox_gap # Below endgame checkbox
         simulation_checkbox_rect = pygame.Rect(simulation_checkbox_x, simulation_checkbox_y, 20, 20)
         simulation_label_x = simulation_checkbox_x + 25
         simulation_label_y = simulation_checkbox_y + 2
@@ -1341,266 +1251,421 @@ def mode_selection_screen():
         p2_y_pos = p1_y_pos + BUTTON_HEIGHT + player_name_gap # P2 position relative to P1
 
         # Calculate HVA button rects unconditionally (relative to p2_y_pos)
-        hva_button_row_y = p2_y_pos + BUTTON_HEIGHT + 10
-        hva_buttons_total_width = (BUTTON_WIDTH * 2 + 20)
-        hva_buttons_start_x = content_left + (content_width - hva_buttons_total_width) // 2
+        hva_button_row_y = p2_y_pos + BUTTON_HEIGHT + 10 # Below P2 input area
+        hva_buttons_total_width = (BUTTON_WIDTH * 2 + 20) # Width of two buttons + gap
+        hva_buttons_start_x = content_left + (content_width - hva_buttons_total_width) // 2 # Centered
         p1_rect_hva = pygame.Rect(hva_buttons_start_x, hva_button_row_y, BUTTON_WIDTH, BUTTON_HEIGHT)
         p2_rect_hva = pygame.Rect(hva_buttons_start_x + BUTTON_WIDTH + 20, hva_button_row_y, BUTTON_WIDTH, BUTTON_HEIGHT)
 
-        # Dropdown positioning (relative to p2_y_pos)
-        if modes[current_input] == MODE_HVH and dropdown_open:
-            dropdown_x = name_rect_x
-            dropdown_button_y = p2_y_pos + BUTTON_HEIGHT + 10 # Position relative to P2 input
-            dropdown_y = dropdown_button_y + 30
-            options = ["Power Tiles", "8-Letter Bingos", "Bingo, Bango, Bongo", "Only Fives", "End Game"]
-            for i, option in enumerate(options): option_rect = pygame.Rect(dropdown_x, dropdown_y + 30 * i, 200, 30); option_rects.append(option_rect)
+        # Dropdown positioning (relative to p2_y_pos if HVH, or equivalent space if not)
+        # Position dropdown below name inputs / HVA buttons depending on mode
+        dropdown_base_y = p2_y_pos + BUTTON_HEIGHT + 10 # Default base below P2 input
+        if modes[current_input] == MODE_HVA:
+            dropdown_base_y = hva_button_row_y + BUTTON_HEIGHT + 10 # Below HVA buttons if HVA mode
 
+        dropdown_x = name_rect_x # Align horizontally with name inputs
+        dropdown_button_y = dropdown_base_y # Y position for the "Practice" button itself
+        dropdown_y = dropdown_button_y + 30 # Y position for the start of the dropdown options
+
+        options = ["Power Tiles", "8-Letter Bingos", "Bingo, Bango, Bongo", "Only Fives", "End Game"]
+        for i, option in enumerate(options):
+            option_rect = pygame.Rect(dropdown_x, dropdown_y + 30 * i, 200, 30)
+            option_rects.append(option_rect)
 
         # --- Event Handling ---
         for event in pygame.event.get():
-            if event.type == pygame.QUIT: pygame.quit(); sys.exit()
+            if event.type == pygame.QUIT:
+                selected_mode = None # Indicate quit
+                loaded_game_data = None
+                print("--- mode_selection_screen(): Quit event detected. ---")
+                return None, None # Explicitly return None, None on quit
 
-            # Handle Dev Tools Dialog FIRST
+            # Handle Dev Tools Dialog FIRST if open
             if showing_dev_tools_dialog:
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     x, y = event.pos
                     # Checkbox click - Visualize
                     if dev_tools_visualize_rect and dev_tools_visualize_rect.collidepoint(x, y):
                         visualize_batch_checked = not visualize_batch_checked
-                    # <<< ADDED: Checkbox click - cProfile >>>
+                    # Checkbox click - cProfile
                     elif dev_tools_cprofile_rect and dev_tools_cprofile_rect.collidepoint(x, y):
                         cprofile_checked = not cprofile_checked
+                        DEVELOPER_PROFILE_ENABLED = cprofile_checked # Update global immediately
                     # Close button click
                     elif dev_tools_close_rect and dev_tools_close_rect.collidepoint(x, y):
                         showing_dev_tools_dialog = False
                 elif event.type == pygame.KEYDOWN:
                      if event.key == pygame.K_ESCAPE: # Allow Esc to close
-                          showing_dev_tools_dialog = False
+                         showing_dev_tools_dialog = False
                 continue # Skip other event handling when dialog is open
 
             # Handle Load Game Input if active
             if showing_load_input:
-                # [ ... Load game input handling ... ] (unchanged)
-                if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     x, y = event.pos
-                    if load_input_rect.collidepoint(x, y): load_input_active = True
-                    else: load_input_active = False
+                    if load_input_rect.collidepoint(x, y):
+                        load_input_active = True
+                    else:
+                        load_input_active = False
+
                     if load_confirm_button_rect.collidepoint(x, y): # Load Confirm ...
                         filepath = load_filename_input.strip()
                         if filepath:
-                             print(f"--- mode_selection_screen(): Attempting to load typed file: {filepath} ---")
-                             try:
-                                 loaded_p_names, loaded_hist, loaded_f_scores = load_game_from_gcg(filepath)
-                                 print(f"--- mode_selection_screen(): GCG loaded successfully. Moves: {len(loaded_hist)} ---")
-                                 selected_mode = "LOADED_GAME"; loaded_game_data = (loaded_p_names, loaded_hist, loaded_f_scores)
-                                 showing_load_input = False; load_input_active = False; break
-                             except FileNotFoundError: print(f"--- mode_selection_screen(): Error: File not found '{filepath}' ---"); show_message_dialog(f"Error: File not found:\n{filepath}", "Load Error"); load_input_active = True
-                             except Exception as e: print(f"--- mode_selection_screen(): Error loading GCG file '{filepath}': {e} ---"); show_message_dialog(f"Error loading file:\n{e}", "Load Error"); load_input_active = True
-                        else: show_message_dialog("Please enter a filename.", "Load Error"); load_input_active = True
+                            # Ensure the filepath has .sgs extension, or add it.
+                            if not filepath.lower().endswith(".sgs"):
+                                filepath += ".sgs"
+                                load_filename_input = filepath # Update the input field display
+
+                            try:
+                                loaded_sgs_data = load_game_from_sgs(filepath)
+                                if loaded_sgs_data:
+                                    selected_mode = "LOADED_SGS_GAME" # More specific mode type
+                                    loaded_game_data = loaded_sgs_data # Store the entire dict
+                                    showing_load_input = False
+                                    load_input_active = False
+                                    # print(f"--- mode_selection_screen(): SGS Game Loaded: {filepath} ---")
+                                    break # Exit mode selection loop
+                                else:
+                                    # load_game_from_sgs prints its own errors, but we can show a dialog too
+                                    show_message_dialog(f"Failed to load SGS game:\n{filepath}\n(Check console for details)", "Load Error")
+                                    load_input_active = True # Keep dialog open
+                            except Exception as e: # Catch any other unexpected errors
+                                print(f"--- mode_selection_screen(): Unexpected error during SGS load attempt for '{filepath}': {e} ---")
+                                traceback.print_exc()
+                                show_message_dialog(f"Unexpected error loading file:\n{e}", "Load Error")
+                                load_input_active = True
+                        else: # Filepath was empty
+                            show_message_dialog("Please enter a filename (.sgs).", "Load Error")
+                            load_input_active = True
                     elif load_cancel_button_rect.collidepoint(x,y): # Load Cancel ...
-                         showing_load_input = False; load_input_active = False; load_filename_input = ""
-                    if not load_input_rect.collidepoint(x,y): input_active = [False, False] # Deactivate name input too
+                        showing_load_input = False
+                        load_input_active = False
+                        load_filename_input = ""
+
+                    # If clicked outside load input area, deactivate name inputs too
+                    if not load_input_rect.collidepoint(x,y):
+                        input_active = [False, False]
+
                 elif event.type == pygame.KEYDOWN and load_input_active: # Load Input Typing ...
                     if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
-                         if load_confirm_button_rect: pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {'pos': load_confirm_button_rect.center, 'button': 1}))
-                    elif event.key == pygame.K_BACKSPACE: load_filename_input = load_filename_input[:-1]
-                    elif event.key == pygame.K_v:
-                        mods = pygame.key.get_mods()
-                        if (mods & pygame.KMOD_CTRL or mods & pygame.KMOD_META) and pyperclip_available:
-                            try:
-                                pasted_text = pyperclip.paste()
-                                if pasted_text: load_filename_input += pasted_text
-                            except Exception as e: print(f"Error pasting from clipboard: {e}")
-                    elif event.unicode.isprintable(): load_filename_input += event.unicode
+                        # Simulate clicking Load Confirm button
+                        # (Need mouse pos, maybe use button center?)
+                        confirm_center = load_confirm_button_rect.center
+                        pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=confirm_center))
+                    elif event.key == pygame.K_BACKSPACE:
+                        load_filename_input = load_filename_input[:-1]
+                    elif event.key == pygame.K_v and (event.mod & pygame.KMOD_META): # CMD+V for paste
+                         if pyperclip_available:
+                             try:
+                                 pasted_text = pyperclip.paste()
+                                 if pasted_text: load_filename_input += pasted_text
+                             except Exception as e:
+                                 print(f"Error during paste: {e}")
+                         else: print("Paste unavailable (pyperclip not loaded).")
+                    elif event.unicode.isprintable(): # Allow typing printable characters
+                        load_filename_input += event.unicode
+                # If load input is active, skip other event processing for this cycle
                 continue # Skip rest of event handling
 
             # Handle other events if load input wasn't active
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                x, y = event.pos
-                if showing_power_tiles_dialog: # Power Tiles Dialog ...
-                    # [ ... Power tiles dialog handling ... ] (unchanged)
-                    dialog_x = (WINDOW_WIDTH - 300) // 2; dialog_y = (WINDOW_HEIGHT - 250) // 2; letter_rects = [pygame.Rect(dialog_x + 20, dialog_y + 40 + i*30, 20, 20) for i in range(4)]; number_rects = [pygame.Rect(dialog_x + 150, dialog_y + 40 + i*30, 20, 20) for i in range(6)]
-                    go_rect = pygame.Rect(dialog_x + 50, dialog_y + 220, 100, 30); cancel_rect = pygame.Rect(dialog_x + 160, dialog_y + 220, 100, 30)
+
+            # Handle Power Tiles Dialog Events
+            if showing_power_tiles_dialog:
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    x, y = event.pos
+                    # Define rects locally for collision detection
+                    dialog_width, dialog_height = 300, 250
+                    dialog_x = (WINDOW_WIDTH - dialog_width) // 2
+                    dialog_y = (WINDOW_HEIGHT - dialog_height) // 2
+                    letter_rects = [pygame.Rect(dialog_x + 20, dialog_y + 40 + i*30, 20, 20) for i in range(4)]
+                    number_rects = [pygame.Rect(dialog_x + 150, dialog_y + 40 + i*30, 20, 20) for i in range(6)]
+                    go_rect = pygame.Rect(dialog_x + 50, dialog_y + 220, 100, 30)
+                    cancel_rect = pygame.Rect(dialog_x + 160, dialog_y + 220, 100, 30)
+
                     for i, rect in enumerate(letter_rects):
                         if rect.collidepoint(x, y): letter_checks[i] = not letter_checks[i]
                     for i, rect in enumerate(number_rects):
-                        if rect.collidepoint(x, y): number_checks[i] = not number_checks[i] # Update number_checks state
+                        if rect.collidepoint(x, y): number_checks[i] = not number_checks[i]
+
                     if go_rect.collidepoint(x, y):
-                        if not any(letter_checks):
-                            show_message_dialog("Please select at least one Power Tile (J, Q, X, Z).", "Selection Required")
-                        elif not any(number_checks):
-                             show_message_dialog("Please select at least one word length.", "Selection Required")
-                        else:
-                            practice_mode = "power_tiles"; selected_mode = MODE_AVA; showing_power_tiles_dialog = False; print(f"--- mode_selection_screen(): Mode selected via Power Tiles Go: {selected_mode} ---"); break
-                    elif cancel_rect.collidepoint(x, y): showing_power_tiles_dialog = False
-                else: # Main Selection Screen ...
-                    # Must define mode_rects before checking collision
-                    mode_rects = []
-                    for i, mode in enumerate(modes):
-                        y_pos_mode = 100 + i * 60 # Use different variable name to avoid conflict
-                        rect = pygame.Rect(content_left + (content_width - (BUTTON_WIDTH * 2 + 20)) // 2, y_pos_mode, BUTTON_WIDTH * 2 + 20, BUTTON_HEIGHT); mode_rects.append(rect)
-                    # Check mode buttons
-                    for i, rect in enumerate(mode_rects):
-                        if rect.collidepoint(x, y):
-                            current_input = i; dropdown_open = False
-                            if i == 0: player_names = ["Player 1", "Player 2"]; input_active = [False, False]
-                            elif i == 1: player_names = ["Player 1", "AI"] if human_player == 1 else ["AI", "Player 2"]; input_active = [True, False] if human_player == 1 else [False, True] # Set initial HVA state
-                            elif i == 2: player_names = ["AI 1", "AI 2"]; input_active = [False, False]
+                        practice_mode = "power_tiles"
+                        selected_mode = MODE_AVA # Default Power Tiles to AI vs AI
+                        showing_power_tiles_dialog = False
+                        print(f"--- mode_selection_screen(): Mode selected via Power Tiles Go: {selected_mode} ---")
+                        break # Exit event loop, then outer while loop
+                    elif cancel_rect.collidepoint(x, y):
+                        showing_power_tiles_dialog = False
+                continue # Skip other events if dialog was open
 
-                    # Handle Endgame Solver Checkbox Click
-                    if endgame_checkbox_rect.collidepoint(x, y):
-                        use_endgame_solver_checked = not use_endgame_solver_checked
-                    # Handle AI Simulation Checkbox Click
-                    elif simulation_checkbox_rect.collidepoint(x, y):
-                        use_ai_simulation_checked = not use_ai_simulation_checked
-
-                    # Handle Developer Tools Button Click
-                    elif dev_tools_button_rect.collidepoint(x, y):
-                        showing_dev_tools_dialog = True
-
-                    # Handle Batch Game Button Click
-                    elif batch_game_button_rect.collidepoint(x, y):
-                        print("--- mode_selection_screen(): Batch Games button clicked ---")
-                        current_selected_game_mode = modes[current_input]
-                        if current_selected_game_mode == MODE_HVH:
-                             show_message_dialog("Batch mode not available for Human vs Human.", "Mode Error")
-                        else: # HVA or AVA selected, proceed
-                            num_games = get_batch_game_dialog()
-                            if num_games is not None:
-                                print(f"--- mode_selection_screen(): Starting batch of {num_games} games ---")
-                                selected_mode = "BATCH_MODE"
-                                # <<< Include visualize_batch_checked AND cprofile_checked >>>
-                                loaded_game_data = (current_selected_game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked, cprofile_checked)
-                                break # Exit mode selection loop
-                            else:
-                                print("--- mode_selection_screen(): Batch game setup cancelled ---")
-
-                    # Handle Start Game Button Click
-                    elif start_game_button_rect.collidepoint(x, y):
-                        selected_mode = modes[current_input] # Set the selected mode now
-                        print(f"--- mode_selection_screen(): Start Game clicked. Mode: {selected_mode} ---")
-                        break # Exit mode selection loop
-
-                    # Check Load Game Button
-                    elif load_game_button_rect.collidepoint(x, y):
-                        print("--- mode_selection_screen(): Load Game button clicked, showing input ---")
-                        showing_load_input = True; load_input_active = True; load_filename_input = ""
-                        continue # Skip rest
-
-                    # Check Other Buttons
-                    elif play_later_rect.collidepoint(x, y): print("--- mode_selection_screen(): Play Later clicked. Exiting. ---"); pygame.quit(); sys.exit()
-                    else: # Handle name inputs, HVA selection, practice dropdown
-                        # ... (rest of name input, HVA, practice dropdown logic - unchanged) ...
-                        clicked_name_input = False
-                        p1_name_rect = pygame.Rect(name_rect_x, p1_y_pos, 200, BUTTON_HEIGHT)
-                        p2_name_rect = pygame.Rect(name_rect_x, p2_y_pos, 200, BUTTON_HEIGHT) if modes[current_input] == MODE_HVH else None
-
-                        if modes[current_input] == MODE_HVH: # HVH Name Input ...
-                            if p1_name_rect.collidepoint(x, y): input_active = [True, False]; clicked_name_input = True
-                            elif p2_name_rect and p2_name_rect.collidepoint(x, y): input_active = [False, True]; clicked_name_input = True
-                        elif modes[current_input] == MODE_HVA: # HVA Name Input / Play As ...
-                            if human_player == 1 and p1_name_rect.collidepoint(x, y): input_active = [True, False]; clicked_name_input = True
-                            elif human_player == 2:
-                                p2_name_rect_hva = pygame.Rect(name_rect_x, p2_y_pos, 200, BUTTON_HEIGHT)
-                                if p2_name_rect_hva.collidepoint(x,y): input_active = [False, True]; clicked_name_input = True
-                            if p1_rect_hva.collidepoint(x, y):
-                                human_player = 1; player_names = ["Player 1", "AI"]; input_active = [True, False]
-                            elif p2_rect_hva.collidepoint(x, y):
-                                human_player = 2; player_names = ["AI", "Player 2"]; input_active = [False, True]
-
-                        if modes[current_input] == MODE_HVH: # Practice Dropdown ...
-                            dropdown_button_y = p2_y_pos + BUTTON_HEIGHT + 10
-                            dropdown_rect = pygame.Rect(name_rect_x, dropdown_button_y, 200, 30)
-                            if dropdown_rect.collidepoint(x, y): dropdown_open = not dropdown_open
-                            elif dropdown_open:
-                                clicked_option = False
-                                current_options = ["Power Tiles", "8-Letter Bingos", "Bingo, Bango, Bongo", "Only Fives", "End Game"]
-                                for i, option_rect in enumerate(option_rects):
-                                    if option_rect.collidepoint(x, y):
-                                        clicked_option = True; dropdown_open = False
-                                        selected_practice_option = current_options[i]
-                                        if selected_practice_option == "Power Tiles": showing_power_tiles_dialog = True
-                                        elif selected_practice_option == "8-Letter Bingos":
-                                            print("--- mode_selection_screen(): 8-Letter Bingo practice selected. Calling eight_letter_practice()... ---")
-                                            # --- MODIFICATION: Unpack max_index ---
-                                            proceed, p_board, p_tiles, p_racks, p_blanks, p_bag, p_max_index = eight_letter_practice()
-                                            # --- END MODIFICATION ---
-                                            if proceed:
-                                                practice_mode = "eight_letter"; selected_mode = MODE_HVH; player_names = ["Player 1", ""]; human_player = 1
-                                                # --- MODIFICATION: Store max_index in practice_state ---
-                                                practice_state = {"board": p_board, "tiles": p_tiles, "racks": p_racks, "blanks": p_blanks, "bag": p_bag, "first_play": False, "scores": [0, 0], "turn": 1, "practice_probability_max_index": p_max_index}
-                                                # --- END MODIFICATION ---
-                                                print(f"--- mode_selection_screen(): 8-Letter practice setup successful. Selected mode: {selected_mode} ---"); break
-                                            else: print("--- mode_selection_screen(): 8-Letter practice setup cancelled or failed. ---")
-                                        elif selected_practice_option == "Bingo, Bango, Bongo":
-                                            print("--- mode_selection_screen(): Bingo, Bango, Bongo practice selected. ---")
-                                            practice_mode = "bingo_bango_bongo"; selected_mode = MODE_AVA; player_names = ["AI 1", "AI 2"]; practice_state = None
-                                            print(f"--- mode_selection_screen(): Bingo, Bango, Bongo setup successful. Selected mode: {selected_mode} ---"); break
-                                        elif selected_practice_option == "Only Fives":
-                                            print("--- mode_selection_screen(): Only Fives practice selected. ---")
-                                            practice_mode = "only_fives"; selected_mode = MODE_HVA; human_player = 1; player_names = ["Player 1", "AI"]; practice_state = None
-                                            print(f"--- mode_selection_screen(): Only Fives setup successful. Selected mode: {selected_mode} ---"); break
-                                        elif selected_practice_option == "End Game": print("End Game practice selected - Not implemented yet")
-                                        break
-                                if not clicked_option and not dropdown_rect.collidepoint(x,y): dropdown_open = False
-                            elif not dropdown_rect.collidepoint(x,y): dropdown_open = False
-
-                        dropdown_button_y_check = p2_y_pos + BUTTON_HEIGHT + 10
-                        dropdown_rect_check = pygame.Rect(name_rect_x, dropdown_button_y_check, 200, 30) if modes[current_input] == MODE_HVH else None
-                        if not clicked_name_input and not (dropdown_open and any(r.collidepoint(x,y) for r in option_rects)) and not p1_name_rect.collidepoint(x,y) and not (p2_name_rect and p2_name_rect.collidepoint(x,y)) and not (dropdown_rect_check and dropdown_rect_check.collidepoint(x,y)) and not endgame_checkbox_rect.collidepoint(x, y) and not simulation_checkbox_rect.collidepoint(x, y):
+            # Handle MOUSEBUTTONDOWN for main screen elements
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                x, y = event.pos
+                # Mode Selection Buttons
+                mode_rects = [] # Recalculate rects for collision check
+                for i, mode in enumerate(modes):
+                    y_pos_mode = 100 + i * 60
+                    rect = pygame.Rect(content_left + (content_width - (BUTTON_WIDTH * 2 + 20)) // 2, y_pos_mode, BUTTON_WIDTH * 2 + 20, BUTTON_HEIGHT)
+                    mode_rects.append(rect)
+                    if rect.collidepoint(x, y):
+                        current_input = i
+                        dropdown_open = False # Close dropdown if mode changes
+                        # Update player names and input active state based on new mode
+                        if i == 0: # HVH
+                            player_names = ["Player 1", "Player 2"]
                             input_active = [False, False]
+                        elif i == 1: # HVA
+                            # Keep existing name if switching between P1/P2 HVA
+                            p1_name = player_names[0] if player_names[0] != "AI" else "Player 1"
+                            p2_name = player_names[1] if player_names[1] != "AI" else "Player 2"
+                            player_names = [p1_name, "AI"] if human_player == 1 else ["AI", p2_name]
+                            input_active = [True, False] if human_player == 1 else [False, True]
+                        elif i == 2: # AVA
+                            player_names = ["AI 1", "AI 2"]
+                            input_active = [False, False]
+                        break # Mode button handled
 
-            elif event.type == pygame.KEYDOWN: # Keyboard Input (Names only now)
-                if not showing_load_input: # Only handle name input if load input isn't showing
-                     active_idx = -1
-                     if input_active[0]: active_idx = 0
-                     elif input_active[1] and modes[current_input] == MODE_HVH: active_idx = 1
-                     elif input_active[1] and modes[current_input] == MODE_HVA and human_player == 2: active_idx = 1
-                     if active_idx != -1:
-                        if event.key == pygame.K_BACKSPACE: player_names[active_idx] = player_names[active_idx][:-1]
-                        elif event.key == pygame.K_RETURN: input_active[active_idx] = False
-                        elif event.unicode.isalnum() or event.unicode == ' ':
-                            if len(player_names[active_idx]) < 15: player_names[active_idx] += event.unicode
+                # Checkbox Clicks (Endgame Solver / AI Simulation)
+                if endgame_checkbox_rect.collidepoint(x, y):
+                    use_endgame_solver_checked = not use_endgame_solver_checked
+                elif simulation_checkbox_rect.collidepoint(x, y):
+                    use_ai_simulation_checked = not use_ai_simulation_checked
+
+                # Developer Tools Button Click
+                elif dev_tools_button_rect.collidepoint(x, y):
+                    showing_dev_tools_dialog = True
+
+                # Bottom Row Button Clicks
+                elif start_game_button_rect.collidepoint(x, y):
+                    current_selected_game_mode = modes[current_input]
+                    # Validate player names (e.g., ensure not empty if human)
+                    valid_start = True
+                    if current_selected_game_mode == MODE_HVH:
+                        if not player_names[0].strip() or not player_names[1].strip():
+                            show_message_dialog("Please enter names for both players.", "Input Error")
+                            valid_start = False
+                    elif current_selected_game_mode == MODE_HVA:
+                        human_idx = 0 if human_player == 1 else 1
+                        if not player_names[human_idx].strip():
+                            show_message_dialog(f"Please enter a name for Player {human_player}.", "Input Error")
+                            valid_start = False
+                    
+                    if valid_start:
+                        selected_mode = modes[current_input]
+                        print(f"--- mode_selection_screen(): Start Game clicked. Mode: {selected_mode} ---")
+                        # Break handled by while loop condition (selected_mode is not None)
+                elif batch_game_button_rect.collidepoint(x, y):
+                     current_selected_game_mode = modes[current_input]
+                     if current_selected_game_mode == MODE_HVH:
+                         show_message_dialog("Batch mode is only available for modes involving AI (HVA or AVA).", "Batch Mode Error")
+                     else:
+                         num_games = get_batch_game_dialog()
+                         if num_games is not None and num_games > 0:
+                             selected_mode = "BATCH_MODE"
+                             # Package all necessary config for batch mode start
+                             loaded_game_data = (current_selected_game_mode, player_names, human_player, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked, cprofile_checked)
+                             print(f"--- mode_selection_screen(): Batch Game selected. Mode: {current_selected_game_mode}, Games: {num_games} ---")
+                             # Break handled by while loop condition
+                         else:
+                             print("--- mode_selection_screen(): Batch game cancelled or invalid number entered. ---")
+
+                elif load_game_button_rect.collidepoint(x, y):
+                    showing_load_input = True
+                    load_input_active = True # Activate input field immediately
+                    load_filename_input = "" # Clear previous input
+                elif play_later_rect.collidepoint(x, y):
+                    selected_mode = None # Indicate quit / play later
+                    loaded_game_data = None
+                    print("--- mode_selection_screen(): Play Later selected. Exiting. ---")
+                    return None, None # Explicitly return None, None
+
+                # Player Name Input Activation
+                clicked_name_input = False
+                p1_name_rect = pygame.Rect(name_rect_x, p1_y_pos, 200, BUTTON_HEIGHT)
+                p2_name_rect = pygame.Rect(name_rect_x, p2_y_pos, 200, BUTTON_HEIGHT) if modes[current_input] == MODE_HVH else None
+
+                if modes[current_input] == MODE_HVH:
+                    if p1_name_rect.collidepoint(x, y):
+                        input_active = [True, False]
+                        clicked_name_input = True
+                    elif p2_name_rect and p2_name_rect.collidepoint(x, y):
+                        input_active = [False, True]
+                        clicked_name_input = True
+                elif modes[current_input] == MODE_HVA:
+                    # Determine which input box corresponds to the human player
+                    human_input_rect = p1_name_rect if human_player == 1 else pygame.Rect(name_rect_x, p2_y_pos, 200, BUTTON_HEIGHT) # Need p2 rect for HVA P2
+                    if human_input_rect.collidepoint(x, y):
+                         input_active = [True, False] if human_player == 1 else [False, True]
+                         clicked_name_input = True
+                    # HVA Player Selection Buttons
+                    if p1_rect_hva.collidepoint(x, y):
+                        human_player = 1
+                        player_names = [player_names[0] if player_names[0] != "AI" else "Player 1", "AI"]
+                        input_active = [True, False] # Activate P1 input
+                    elif p2_rect_hva.collidepoint(x, y):
+                        human_player = 2
+                        player_names = ["AI", player_names[1] if player_names[1] != "AI" else "Player 2"]
+                        input_active = [False, True] # Activate P2 input
+
+                # Practice Dropdown Handling (Only if HVH mode is selected)
+                if modes[current_input] == MODE_HVH:
+                    dropdown_button_rect = pygame.Rect(name_rect_x, dropdown_button_y, 200, 30)
+                    if dropdown_button_rect.collidepoint(x, y):
+                        dropdown_open = not dropdown_open
+                    elif dropdown_open:
+                        clicked_option = False
+                        current_options = ["Power Tiles", "8-Letter Bingos", "Bingo, Bango, Bongo", "Only Fives", "End Game"]
+                        for i, option_rect in enumerate(option_rects):
+                            if option_rect.collidepoint(x, y):
+                                clicked_option = True
+                                dropdown_open = False
+                                selected_practice_option = current_options[i]
+                                print(f"Practice option selected: {selected_practice_option}")
+                                if selected_practice_option == "Power Tiles":
+                                    showing_power_tiles_dialog = True
+                                elif selected_practice_option == "8-Letter Bingos":
+                                    # Call the setup function which now returns state or None
+                                    setup_ok, p_board, p_tiles, p_racks, p_blanks, p_bag, p_max_idx = eight_letter_practice()
+                                    if setup_ok:
+                                        practice_mode = "eight_letter"
+                                        selected_mode = MODE_HVH # 8-letter is HVH practice
+                                        player_names = ["Player 1", ""] # P2 name not used
+                                        human_player = 1
+                                        practice_state = {"board": p_board, "tiles": p_tiles, "racks": p_racks, "blanks": p_blanks, "bag": p_bag, "first_play": False, "scores": [0, 0], "turn": 1}
+                                        practice_probability_max_index = p_max_idx # Store the index
+                                        print(f"--- mode_selection_screen(): 8-Letter Practice selected. Max Index: {practice_probability_max_index} ---")
+                                        # Break handled by while loop condition
+                                    else:
+                                        print("--- mode_selection_screen(): 8-Letter Practice setup cancelled or failed. ---")
+
+                                elif selected_practice_option == "Bingo, Bango, Bongo":
+                                    practice_mode = "bingo_bango_bongo"
+                                    selected_mode = MODE_AVA # Default to AI vs AI
+                                    player_names = ["AI 1", "AI 2"]
+                                    practice_state = None # No specific pre-state needed usually
+                                    print(f"--- mode_selection_screen(): Bingo Bango Bongo selected. Mode: {selected_mode} ---")
+                                    # Break handled by while loop condition
+                                elif selected_practice_option == "Only Fives":
+                                    practice_mode = "only_fives"
+                                    selected_mode = MODE_HVA # Default to HVA
+                                    human_player = 1
+                                    player_names = ["Player 1", "AI"]
+                                    practice_state = None
+                                    print(f"--- mode_selection_screen(): Only Fives selected. Mode: {selected_mode} ---")
+                                    # Break handled by while loop condition
+                                elif selected_practice_option == "End Game":
+                                    # Placeholder for End Game practice setup
+                                    print("End Game practice mode selected (Not Implemented Yet)")
+                                    show_message_dialog("End Game practice mode is not yet implemented.", "Coming Soon")
+                                break # Option selected, exit inner loop
+
+                        # Close dropdown if clicked outside of it or its options
+                        if not clicked_option and not dropdown_button_rect.collidepoint(x,y):
+                             dropdown_open = False
+                    # If clicked outside dropdown button when it's closed
+                    elif not dropdown_open and not dropdown_button_rect.collidepoint(x,y):
+                         pass # Do nothing, dropdown remains closed
+
+                # Deactivate name input if clicked elsewhere (and not on another input)
+                # Check dropdown button too if HVH mode
+                dropdown_button_y_check = p2_y_pos + BUTTON_HEIGHT + 10 # Recalculate base Y
+                if modes[current_input] == MODE_HVA: dropdown_button_y_check = hva_button_row_y + BUTTON_HEIGHT + 10
+                dropdown_rect_check = pygame.Rect(name_rect_x, dropdown_button_y_check, 200, 30) if modes[current_input] == MODE_HVH else None
+
+                is_click_on_input_area = clicked_name_input
+                if dropdown_rect_check and dropdown_rect_check.collidepoint(x,y): is_click_on_input_area = True
+                if dropdown_open: # Also check dropdown options if open
+                    for r in option_rects:
+                        if r.collidepoint(x,y): is_click_on_input_area = True; break
+
+                if not is_click_on_input_area:
+                    input_active = [False, False]
+
+
+            # Handle KEYDOWN for text input
+            elif event.type == pygame.KEYDOWN:
+                active_idx = -1
+                if input_active[0]: active_idx = 0
+                elif input_active[1] and modes[current_input] == MODE_HVH: active_idx = 1
+                elif input_active[1] and modes[current_input] == MODE_HVA and human_player == 2: active_idx = 1
+
+                if active_idx != -1: # If a name input is active
+                    if event.key == pygame.K_BACKSPACE:
+                        player_names[active_idx] = player_names[active_idx][:-1]
+                    elif event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
+                        input_active[active_idx] = False # Deactivate on enter
+                    elif event.unicode.isprintable(): # Allow typing printable characters
+                        player_names[active_idx] += event.unicode
 
         # --- Drawing Logic ---
-        screen.fill(WHITE);
-        if image: screen.blit(image, (content_left, 0))
-        title_text = dialog_font.render("Select Game Mode", True, BLACK); title_x = content_left + (content_width - title_text.get_width()) // 2; screen.blit(title_text, (title_x, 50))
-        mode_rects = [] # Draw Mode Buttons ...
+        screen.fill(WHITE)
+        if image: screen.blit(image, (content_left, 0)) # Draw background image if loaded
+
+        # Title
+        title_text = dialog_font.render("Select Game Mode", True, BLACK)
+        title_x = content_left + (content_width - title_text.get_width()) // 2
+        screen.blit(title_text, (title_x, 50))
+
+        # Draw Mode Buttons
+        mode_rects = [] # Redefine for drawing scope
         for i, mode in enumerate(modes):
             y_pos_mode = 100 + i * 60 # Use different variable name
-            rect = pygame.Rect(content_left + (content_width - (BUTTON_WIDTH * 2 + 20)) // 2, y_pos_mode, BUTTON_WIDTH * 2 + 20, BUTTON_HEIGHT); hover = rect.collidepoint(pygame.mouse.get_pos())
-            color = BUTTON_HOVER if i == current_input or hover else BUTTON_COLOR; pygame.draw.rect(screen, color, rect)
-            if i == current_input: pygame.draw.rect(screen, BLACK, rect, 2)
-            text = button_font.render(mode, True, BLACK); text_rect = text.get_rect(center=rect.center); screen.blit(text, text_rect); mode_rects.append(rect)
+            rect = pygame.Rect(content_left + (content_width - (BUTTON_WIDTH * 2 + 20)) // 2, y_pos_mode, BUTTON_WIDTH * 2 + 20, BUTTON_HEIGHT)
+            hover = rect.collidepoint(pygame.mouse.get_pos())
+            color = BUTTON_HOVER if i == current_input or hover else BUTTON_COLOR
+            pygame.draw.rect(screen, color, rect)
+            text = button_font.render(mode, True, BLACK)
+            text_rect = text.get_rect(center=rect.center)
+            screen.blit(text, text_rect)
+            mode_rects.append(rect) # Store rect for potential later use
 
         # Draw Endgame Solver Checkbox
-        draw_checkbox(screen, endgame_checkbox_rect.x, endgame_checkbox_rect.y, use_endgame_solver_checked)
+        pygame.draw.rect(screen, WHITE, endgame_checkbox_rect)
+        pygame.draw.rect(screen, BLACK, endgame_checkbox_rect, 1)
+        if use_endgame_solver_checked:
+            pygame.draw.line(screen, BLACK, endgame_checkbox_rect.topleft, endgame_checkbox_rect.bottomright, 2)
+            pygame.draw.line(screen, BLACK, endgame_checkbox_rect.topright, endgame_checkbox_rect.bottomleft, 2)
         endgame_label_surf = ui_font.render("Use AI Endgame Solver", True, BLACK)
         screen.blit(endgame_label_surf, (endgame_label_x, endgame_label_y))
 
         # Draw AI Simulation Checkbox
-        draw_checkbox(screen, simulation_checkbox_rect.x, simulation_checkbox_rect.y, use_ai_simulation_checked)
+        pygame.draw.rect(screen, WHITE, simulation_checkbox_rect)
+        pygame.draw.rect(screen, BLACK, simulation_checkbox_rect, 1)
+        if use_ai_simulation_checked:
+            pygame.draw.line(screen, BLACK, simulation_checkbox_rect.topleft, simulation_checkbox_rect.bottomright, 2)
+            pygame.draw.line(screen, BLACK, simulation_checkbox_rect.topright, simulation_checkbox_rect.bottomleft, 2)
         simulation_label_surf = ui_font.render("Use AI 2-ply Simulation", True, BLACK)
         screen.blit(simulation_label_surf, (simulation_label_x, simulation_label_y))
 
-        # Draw Play Later Button ...
-        hover = play_later_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else BUTTON_COLOR; pygame.draw.rect(screen, color, play_later_rect)
-        play_later_text = button_font.render("Play Later", True, BLACK); play_later_text_rect = play_later_text.get_rect(center=play_later_rect.center); screen.blit(play_later_text, play_later_text_rect)
-
-        # Draw Load Game Button ...
-        hover = load_game_button_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else BUTTON_COLOR; pygame.draw.rect(screen, color, load_game_button_rect)
-        load_game_text = button_font.render("Load Game", True, BLACK); load_game_text_rect = load_game_text.get_rect(center=load_game_button_rect.center); screen.blit(load_game_text, load_game_text_rect)
-
-        # Draw Batch Game Button
-        hover = batch_game_button_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else BUTTON_COLOR; pygame.draw.rect(screen, color, batch_game_button_rect)
-        batch_game_text = button_font.render("Batch Games", True, BLACK); batch_game_text_rect = batch_game_text.get_rect(center=batch_game_button_rect.center); screen.blit(batch_game_text, batch_game_text_rect)
-
-        # Draw Start Game Button
-        hover = start_game_button_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else BUTTON_COLOR; pygame.draw.rect(screen, color, start_game_button_rect)
-        start_game_text = button_font.render("Start Game", True, BLACK); start_game_text_rect = start_game_text.get_rect(center=start_game_button_rect.center); screen.blit(start_game_text, start_game_text_rect)
-
-        # Draw Developer Tools Button (Bottom Left)
+        # Draw Bottom Buttons
+        # Play Later Button
+        hover = play_later_rect.collidepoint(pygame.mouse.get_pos())
+        color = BUTTON_HOVER if hover else BUTTON_COLOR
+        pygame.draw.rect(screen, color, play_later_rect)
+        play_later_text = button_font.render("Play Later", True, BLACK)
+        play_later_text_rect = play_later_text.get_rect(center=play_later_rect.center)
+        screen.blit(play_later_text, play_later_text_rect)
+        # Load Game Button
+        hover = load_game_button_rect.collidepoint(pygame.mouse.get_pos())
+        color = BUTTON_HOVER if hover else BUTTON_COLOR
+        pygame.draw.rect(screen, color, load_game_button_rect)
+        load_game_text = button_font.render("Load Game", True, BLACK)
+        load_game_text_rect = load_game_text.get_rect(center=load_game_button_rect.center)
+        screen.blit(load_game_text, load_game_text_rect)
+        # Batch Game Button
+        hover = batch_game_button_rect.collidepoint(pygame.mouse.get_pos())
+        color = BUTTON_HOVER if hover else BUTTON_COLOR
+        pygame.draw.rect(screen, color, batch_game_button_rect)
+        batch_game_text = button_font.render("Batch Games", True, BLACK)
+        batch_game_text_rect = batch_game_text.get_rect(center=batch_game_button_rect.center)
+        screen.blit(batch_game_text, batch_game_text_rect)
+        # Start Game Button
+        hover = start_game_button_rect.collidepoint(pygame.mouse.get_pos())
+        color = BUTTON_HOVER if hover else BUTTON_COLOR
+        pygame.draw.rect(screen, color, start_game_button_rect)
+        start_game_text = button_font.render("Start Game", True, BLACK)
+        start_game_text_rect = start_game_text.get_rect(center=start_game_button_rect.center)
+        screen.blit(start_game_text, start_game_text_rect)
+        # Developer Tools Button (Bottom Left)
         hover = dev_tools_button_rect.collidepoint(pygame.mouse.get_pos())
         color = BUTTON_HOVER if hover else BUTTON_COLOR
         pygame.draw.rect(screen, color, dev_tools_button_rect)
@@ -1611,89 +1676,206 @@ def mode_selection_screen():
 
         # Draw Load Game Input Field (if active)
         if showing_load_input:
-             pygame.draw.rect(screen, WHITE, load_input_rect); pygame.draw.rect(screen, BLACK, load_input_rect, 1 if not load_input_active else 2)
-             input_surf = ui_font.render(load_filename_input, True, BLACK); screen.blit(input_surf, (load_input_rect.x + 5, load_input_rect.y + 5))
-             if load_input_active and int(time.time() * 2) % 2 == 0: # Blinking cursor
-                  cursor_x = load_input_rect.x + 5 + input_surf.get_width(); cursor_y1 = load_input_rect.y + 5; cursor_y2 = load_input_rect.y + load_input_rect.height - 5
-                  pygame.draw.line(screen, BLACK, (cursor_x, cursor_y1), (cursor_x, cursor_y2), 1)
-             hover = load_confirm_button_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else BUTTON_COLOR # Confirm Button
-             pygame.draw.rect(screen, color, load_confirm_button_rect); text = button_font.render("Load File", True, BLACK); text_rect = text.get_rect(center=load_confirm_button_rect.center); screen.blit(text, text_rect)
-             hover = load_cancel_button_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else BUTTON_COLOR # Cancel Button
-             pygame.draw.rect(screen, color, load_cancel_button_rect); text = button_font.render("Cancel", True, BLACK); text_rect = text.get_rect(center=load_cancel_button_rect.center); screen.blit(text, text_rect)
+            pygame.draw.rect(screen, WHITE, load_input_rect) # Background
+            pygame.draw.rect(screen, BLACK, load_input_rect, 1 if not load_input_active else 2) # Border (thicker if active)
+            input_surf = ui_font.render(load_filename_input, True, BLACK)
+            screen.blit(input_surf, (load_input_rect.x + 5, load_input_rect.y + 5))
+            # Blinking cursor
+            if load_input_active and int(time.time() * 2) % 2 == 0:
+                cursor_x = load_input_rect.x + 5 + input_surf.get_width()
+                cursor_y1 = load_input_rect.y + 5
+                cursor_y2 = load_input_rect.y + load_input_rect.height - 5
+                pygame.draw.line(screen, BLACK, (cursor_x, cursor_y1), (cursor_x, cursor_y2), 1)
+            # Draw Load Confirm/Cancel buttons
+            hover = load_confirm_button_rect.collidepoint(pygame.mouse.get_pos())
+            color = BUTTON_HOVER if hover else BUTTON_COLOR # Confirm Button
+            pygame.draw.rect(screen, color, load_confirm_button_rect)
+            text = button_font.render("Load File", True, BLACK)
+            text_rect = text.get_rect(center=load_confirm_button_rect.center)
+            screen.blit(text, text_rect)
+            hover = load_cancel_button_rect.collidepoint(pygame.mouse.get_pos())
+            color = BUTTON_HOVER if hover else BUTTON_COLOR # Cancel Button
+            pygame.draw.rect(screen, color, load_cancel_button_rect)
+            text = button_font.render("Cancel", True, BLACK)
+            text_rect = text.get_rect(center=load_cancel_button_rect.center)
+            screen.blit(text, text_rect)
 
-        # Name Input / Practice Dropdown / HVA Selection Drawing ...
-        # ... (rest of drawing logic for names, HVA, practice dropdown - unchanged) ...
-        name_rect_width = 200;
-        p1_label_text = "Player 1 Name:"; p1_label = ui_font.render(p1_label_text, True, BLACK);
+
+        # Name Input / Practice Dropdown / HVA Selection Drawing
+        name_rect_width = 200 # Width of name input boxes
+
+        # Player 1 Input Box (Always potentially visible)
+        p1_label_text = "Player 1 Name:"
+        p1_label = ui_font.render(p1_label_text, True, BLACK)
         p1_name_rect = pygame.Rect(name_rect_x, p1_y_pos, name_rect_width, BUTTON_HEIGHT) # Define for drawing
-        p1_label_x = name_rect_x - p1_label.get_width() - 10; screen.blit(p1_label, (p1_label_x, p1_y_pos + 5)); p1_bg_color = LIGHT_BLUE if input_active[0] else (GRAY if modes[current_input] == MODE_AVA else WHITE); pygame.draw.rect(screen, p1_bg_color, p1_name_rect); pygame.draw.rect(screen, BLACK, p1_name_rect, 1)
-        p1_name_text = ui_font.render(player_names[0], True, BLACK); screen.blit(p1_name_text, (p1_name_rect.x + 5, p1_name_rect.y + 5))
+        p1_label_x = name_rect_x - p1_label.get_width() - 10 # Position label left of box
+        screen.blit(p1_label, (p1_label_x, p1_y_pos + 5))
+        # Background color depends on mode and active state
+        p1_bg_color = LIGHT_BLUE if input_active[0] else (GRAY if modes[current_input] == MODE_AVA else WHITE)
+        pygame.draw.rect(screen, p1_bg_color, p1_name_rect)
+        pygame.draw.rect(screen, BLACK, p1_name_rect, 1) # Border
+        p1_name_text = ui_font.render(player_names[0], True, BLACK)
+        screen.blit(p1_name_text, (p1_name_rect.x + 5, p1_name_rect.y + 5))
+        # Blinking cursor for P1 input
+        if input_active[0] and int(time.time() * 2) % 2 == 0:
+            cursor_x = p1_name_rect.x + 5 + p1_name_text.get_width()
+            cursor_y1 = p1_name_rect.y + 5
+            cursor_y2 = p1_name_rect.bottom - 5
+            pygame.draw.line(screen, BLACK, (cursor_x, cursor_y1), (cursor_x, cursor_y2), 1)
 
+
+        # Player 2 Input Box / AI Label / Practice Dropdown
         if modes[current_input] == MODE_HVH:
-            p2_label_text = "Player 2 Name:"; p2_label = ui_font.render(p2_label_text, True, BLACK);
+            # Draw P2 Input Box
+            p2_label_text = "Player 2 Name:"
+            p2_label = ui_font.render(p2_label_text, True, BLACK)
             p2_name_rect = pygame.Rect(name_rect_x, p2_y_pos, name_rect_width, BUTTON_HEIGHT) # Define for drawing
-            p2_label_x = name_rect_x - p2_label.get_width() - 10; screen.blit(p2_label, (p2_label_x, p2_y_pos + 5))
-            pygame.draw.rect(screen, WHITE if not input_active[1] else LIGHT_BLUE, p2_name_rect); pygame.draw.rect(screen, BLACK, p2_name_rect, 1); p2_name_text = ui_font.render(player_names[1], True, BLACK); screen.blit(p2_name_text, (p2_name_rect.x + 5, p2_name_rect.y + 5))
-            dropdown_button_y = p2_y_pos + BUTTON_HEIGHT + 10
-            dropdown_rect = pygame.Rect(name_rect_x, dropdown_button_y, 200, 30); hover = dropdown_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else BUTTON_COLOR; pygame.draw.rect(screen, color, dropdown_rect)
-            text = button_font.render("Practice", True, BLACK); text_rect = text.get_rect(center=dropdown_rect.center); screen.blit(text, text_rect)
+            p2_label_x = name_rect_x - p2_label.get_width() - 10
+            screen.blit(p2_label, (p2_label_x, p2_y_pos + 5))
+            pygame.draw.rect(screen, WHITE if not input_active[1] else LIGHT_BLUE, p2_name_rect)
+            pygame.draw.rect(screen, BLACK, p2_name_rect, 1)
+            p2_name_text = ui_font.render(player_names[1], True, BLACK)
+            screen.blit(p2_name_text, (p2_name_rect.x + 5, p2_name_rect.y + 5))
+            # Blinking cursor for P2 input
+            if input_active[1] and int(time.time() * 2) % 2 == 0:
+                cursor_x = p2_name_rect.x + 5 + p2_name_text.get_width()
+                cursor_y1 = p2_name_rect.y + 5
+                cursor_y2 = p2_name_rect.bottom - 5
+                pygame.draw.line(screen, BLACK, (cursor_x, cursor_y1), (cursor_x, cursor_y2), 1)
+
+            # Draw Practice Dropdown Button (Only in HVH)
+            dropdown_rect = pygame.Rect(name_rect_x, dropdown_button_y, 200, 30)
+            hover = dropdown_rect.collidepoint(pygame.mouse.get_pos())
+            color = BUTTON_HOVER if hover else BUTTON_COLOR
+            pygame.draw.rect(screen, color, dropdown_rect)
+            text = button_font.render("Practice", True, BLACK)
+            text_rect = text.get_rect(center=dropdown_rect.center)
+            screen.blit(text, text_rect)
+            # Draw Dropdown Options if open
             if dropdown_open:
                 current_options = ["Power Tiles", "8-Letter Bingos", "Bingo, Bango, Bongo", "Only Fives", "End Game"]
                 for i, option_rect in enumerate(option_rects):
-                     hover = option_rect.collidepoint(pygame.mouse.get_pos()); color = BUTTON_HOVER if hover else DROPDOWN_COLOR; pygame.draw.rect(screen, color, option_rect);
-                     text = button_font.render(current_options[i], True, BLACK); text_rect = text.get_rect(center=option_rect.center); screen.blit(text, text_rect)
-        elif modes[current_input] == MODE_HVA:
-            p2_label_text = "AI Name:"; p2_label = ui_font.render(p2_label_text, True, BLACK);
-            p2_name_rect = pygame.Rect(name_rect_x, p2_y_pos, name_rect_width, BUTTON_HEIGHT) # Define for drawing
-            p2_label_x = name_rect_x - p2_label.get_width() - 10; screen.blit(p2_label, (p2_label_x, p2_y_pos + 5))
-            pygame.draw.rect(screen, GRAY, p2_name_rect); pygame.draw.rect(screen, BLACK, p2_name_rect, 1); p2_name_text = ui_font.render(player_names[1], True, BLACK); screen.blit(p2_name_text, (p2_name_rect.x + 5, p2_name_rect.y + 5))
-            p1_hover = p1_rect_hva.collidepoint(pygame.mouse.get_pos()); p2_hover = p2_rect_hva.collidepoint(pygame.mouse.get_pos()); pygame.draw.rect(screen, BUTTON_HOVER if p1_hover else BUTTON_COLOR, p1_rect_hva);
-            if human_player == 1: pygame.draw.rect(screen, BLACK, p1_rect_hva, 2)
-            pygame.draw.rect(screen, BUTTON_HOVER if p2_hover else BUTTON_COLOR, p2_rect_hva);
-            if human_player == 2: pygame.draw.rect(screen, BLACK, p2_rect_hva, 2)
-            p1_text = button_font.render("Play as P1", True, BLACK); p2_text = button_font.render("Play as P2", True, BLACK); p1_text_rect = p1_text.get_rect(center=p1_rect_hva.center); p2_text_rect = p2_text.get_rect(center=p2_rect_hva.center); screen.blit(p1_text, p1_text_rect); screen.blit(p2_text, p2_text_rect)
-        elif modes[current_input] == MODE_AVA:
-            p2_label_text = "AI 2 Name:"; p2_label = ui_font.render(p2_label_text, True, BLACK);
-            p2_name_rect = pygame.Rect(name_rect_x, p2_y_pos, name_rect_width, BUTTON_HEIGHT) # Define for drawing
-            p2_label_x = name_rect_x - p2_label.get_width() - 10; screen.blit(p2_label, (p2_label_x, p2_y_pos + 5))
-            pygame.draw.rect(screen, GRAY, p2_name_rect); pygame.draw.rect(screen, BLACK, p2_name_rect, 1); p2_name_text = ui_font.render(player_names[1], True, BLACK); screen.blit(p2_name_text, (p2_name_rect.x + 5, p2_name_rect.y + 5))
-            pygame.draw.rect(screen, GRAY, p1_name_rect); pygame.draw.rect(screen, BLACK, p1_name_rect, 1); p1_name_text = ui_font.render(player_names[0], True, BLACK); screen.blit(p1_name_text, (p1_name_rect.x + 5, p1_name_rect.y + 5))
+                    hover = option_rect.collidepoint(pygame.mouse.get_pos())
+                    color = BUTTON_HOVER if hover else DROPDOWN_COLOR
+                    pygame.draw.rect(screen, color, option_rect)
+                    text = button_font.render(current_options[i], True, BLACK)
+                    text_rect = text.get_rect(center=option_rect.center)
+                    screen.blit(text, text_rect)
 
-        # Draw Power Tiles Dialog if active ...
+        elif modes[current_input] == MODE_HVA:
+            # Draw P2 as AI (Grayed out)
+            p2_label_text = "AI Name:"
+            p2_label = ui_font.render(p2_label_text, True, BLACK)
+            p2_name_rect_hva = pygame.Rect(name_rect_x, p2_y_pos, name_rect_width, BUTTON_HEIGHT) # Define for drawing
+            p2_label_x = name_rect_x - p2_label.get_width() - 10
+            screen.blit(p2_label, (p2_label_x, p2_y_pos + 5))
+            pygame.draw.rect(screen, GRAY, p2_name_rect_hva) # Gray background for AI
+            pygame.draw.rect(screen, BLACK, p2_name_rect_hva, 1)
+            p2_name_text = ui_font.render(player_names[1] if human_player == 1 else player_names[0], True, BLACK) # Show AI name
+            screen.blit(p2_name_text, (p2_name_rect_hva.x + 5, p2_name_rect_hva.y + 5))
+
+            # Draw HVA Player Selection Buttons
+            p1_hover = p1_rect_hva.collidepoint(pygame.mouse.get_pos())
+            p2_hover = p2_rect_hva.collidepoint(pygame.mouse.get_pos())
+            # Highlight selected player button
+            pygame.draw.rect(screen, BUTTON_HOVER if p1_hover or human_player == 1 else BUTTON_COLOR, p1_rect_hva)
+            pygame.draw.rect(screen, BUTTON_HOVER if p2_hover or human_player == 2 else BUTTON_COLOR, p2_rect_hva)
+            p1_text = button_font.render("Play as P1", True, BLACK)
+            p2_text = button_font.render("Play as P2", True, BLACK)
+            p1_text_rect = p1_text.get_rect(center=p1_rect_hva.center)
+            p2_text_rect = p2_text.get_rect(center=p2_rect_hva.center)
+            screen.blit(p1_text, p1_text_rect)
+            screen.blit(p2_text, p2_text_rect)
+
+        elif modes[current_input] == MODE_AVA:
+            # Draw P2 as AI (Grayed out)
+            p2_label_text = "AI 2 Name:"
+            p2_label = ui_font.render(p2_label_text, True, BLACK)
+            p2_name_rect_ava = pygame.Rect(name_rect_x, p2_y_pos, name_rect_width, BUTTON_HEIGHT) # Define for drawing
+            p2_label_x = name_rect_x - p2_label.get_width() - 10
+            screen.blit(p2_label, (p2_label_x, p2_y_pos + 5))
+            pygame.draw.rect(screen, GRAY, p2_name_rect_ava) # Gray background
+            pygame.draw.rect(screen, BLACK, p2_name_rect_ava, 1)
+            p2_name_text = ui_font.render(player_names[1], True, BLACK)
+            screen.blit(p2_name_text, (p2_name_rect_ava.x + 5, p2_name_rect_ava.y + 5))
+            # Also gray out P1 input for AVA
+            pygame.draw.rect(screen, GRAY, p1_name_rect)
+            pygame.draw.rect(screen, BLACK, p1_name_rect, 1)
+            p1_name_text = ui_font.render(player_names[0], True, BLACK)
+            screen.blit(p1_name_text, (p1_name_rect.x + 5, p1_name_rect.y + 5))
+
+
+        # Draw Power Tiles Dialog if active
         if showing_power_tiles_dialog:
-            # ... (power tiles dialog drawing - unchanged) ...
-            dialog_width, dialog_height = 300, 250; dialog_x = (WINDOW_WIDTH - dialog_width) // 2; dialog_y = (WINDOW_HEIGHT - dialog_height) // 2; pygame.draw.rect(screen, DIALOG_COLOR, (dialog_x, dialog_y, dialog_width, dialog_height)); pygame.draw.rect(screen, BLACK, (dialog_x, dialog_y, dialog_width, dialog_height), 2)
-            title_text = dialog_font.render("Power Tiles Options", True, BLACK); screen.blit(title_text, (dialog_x + 10, dialog_y + 10)); letters = ['J', 'Q', 'X', 'Z']
-            for i, letter in enumerate(letters): draw_checkbox(screen, dialog_x + 20, dialog_y + 40 + i*30, letter_checks[i]); text = ui_font.render(letter, True, BLACK); screen.blit(text, (dialog_x + 50, dialog_y + 40 + i*30))
+            # Draw dialog background
+            dialog_width, dialog_height = 300, 250
+            dialog_x = (WINDOW_WIDTH - dialog_width) // 2
+            dialog_y = (WINDOW_HEIGHT - dialog_height) // 2
+            pygame.draw.rect(screen, DIALOG_COLOR, (dialog_x, dialog_y, dialog_width, dialog_height))
+            pygame.draw.rect(screen, BLACK, (dialog_x, dialog_y, dialog_width, dialog_height), 2) # Border
+            # Title
+            title_text = dialog_font.render("Power Tiles Options", True, BLACK)
+            screen.blit(title_text, (dialog_x + 10, dialog_y + 10))
+            # Checkboxes
+            letters = ['J', 'Q', 'X', 'Z']
+            for i, letter in enumerate(letters):
+                draw_checkbox(screen, dialog_x + 20, dialog_y + 40 + i*30, letter_checks[i])
+                text = ui_font.render(letter, True, BLACK)
+                screen.blit(text, (dialog_x + 50, dialog_y + 40 + i*30))
             numbers = ['2', '3', '4', '5', '6', '7+']
-            for i, num in enumerate(numbers): draw_checkbox(screen, dialog_x + 150, dialog_y + 40 + i*30, number_checks[i]); text = ui_font.render(num, True, BLACK); screen.blit(text, (dialog_x + 180, dialog_y + 40 + i*30))
-            go_rect = pygame.Rect(dialog_x + 50, dialog_y + 220, 100, 30); cancel_rect = pygame.Rect(dialog_x + 160, dialog_y + 220, 100, 30); pygame.draw.rect(screen, BUTTON_COLOR, go_rect); pygame.draw.rect(screen, BUTTON_COLOR, cancel_rect)
-            go_text = button_font.render("Go", True, BLACK); cancel_text = button_font.render("Cancel", True, BLACK); screen.blit(go_text, go_text.get_rect(center=go_rect.center)); screen.blit(cancel_text, cancel_text.get_rect(center=cancel_rect.center))
+            for i, num in enumerate(numbers):
+                draw_checkbox(screen, dialog_x + 150, dialog_y + 40 + i*30, number_checks[i])
+                text = ui_font.render(num, True, BLACK)
+                screen.blit(text, (dialog_x + 180, dialog_y + 40 + i*30))
+            # Buttons
+            go_rect = pygame.Rect(dialog_x + 50, dialog_y + 220, 100, 30)
+            cancel_rect = pygame.Rect(dialog_x + 160, dialog_y + 220, 100, 30)
+            pygame.draw.rect(screen, BUTTON_COLOR, go_rect)
+            pygame.draw.rect(screen, BUTTON_COLOR, cancel_rect)
+            go_text = button_font.render("Go", True, BLACK)
+            cancel_text = button_font.render("Cancel", True, BLACK)
+            screen.blit(go_text, go_text.get_rect(center=go_rect.center))
+            screen.blit(cancel_text, cancel_text.get_rect(center=cancel_rect.center))
 
         # Draw Developer Tools Dialog
         if showing_dev_tools_dialog:
-            # <<< Pass cprofile_checked state >>>
+            # Pass cprofile_checked state to the drawing function
             dev_tools_visualize_rect, dev_tools_cprofile_rect, dev_tools_close_rect = draw_dev_tools_dialog(visualize_batch_checked, cprofile_checked)
 
 
         # --- Display Update ---
         pygame.display.flip()
 
-        # --- Exit Condition Check ---
-        if selected_mode: break
+        # Break loop if a mode was selected (either by button or practice option)
+        if selected_mode is not None:
+            break
 
-    print(f"--- mode_selection_screen(): Exiting loop. Returning mode={selected_mode} ---")
+    # --- Exit Condition Check ---
+    if selected_mode is None: # If loop exited without selecting a mode (e.g., closed window)
+        print("--- mode_selection_screen(): Loop exited without mode selection. ---")
+        return None, None
+
     # Return loaded game data or new game setup data
-    if selected_mode == "LOADED_GAME":
+    if selected_mode == "LOADED_SGS_GAME":
+        # loaded_game_data is the dictionary loaded from SGS file
         return selected_mode, loaded_game_data
     elif selected_mode == "BATCH_MODE":
-        # <<< Return cprofile_checked >>>
-        return selected_mode, loaded_game_data # loaded_game_data already contains visualize_batch_checked and cprofile_checked
-    else:
-        # <<< Return cprofile_checked >>>
-        # Add cprofile_checked to the tuple for consistency
-        return selected_mode, (player_names, human_player, practice_mode, letter_checks, number_checks, use_endgame_solver_checked, use_ai_simulation_checked, practice_state, visualize_batch_checked, cprofile_checked)
-
+        # loaded_game_data is the tuple configured for batch mode
+        return selected_mode, loaded_game_data
+    else: # New Game or Practice Mode
+        # Construct the return tuple - ENSURE 11 ITEMS
+        return_data_tuple = (
+            player_names, human_player, practice_mode,
+            letter_checks, number_checks, use_endgame_solver_checked,
+            use_ai_simulation_checked, practice_state,
+            visualize_batch_checked, # Pass visualize setting
+            cprofile_checked,        # Pass cProfile setting
+            practice_probability_max_index # Pass max index (will be None if not 8-letter)
+        )
+        # <<< ADD DEBUG PRINT >>>
+        print(f"DEBUG: mode_selection_screen - About to return tuple with {len(return_data_tuple)} items for mode {selected_mode}")
+        # <<< END DEBUG PRINT >>>
+        return selected_mode, return_data_tuple
 
 
 
@@ -3086,95 +3268,204 @@ def calculate_final_scores(current_scores, racks, bag):
 
 
 
-# In Scrabble_Game.py
+def play_hint_move(
+    move, current_tiles, current_rack, current_blanks,
+    current_score, current_bag, current_board,
+    is_first_play, current_turn, # This is the 9th argument
+    move_history_list,
+    board_tile_counts, # This Counter object will be modified IN-PLACE
+    blanks_played_count): # This is the integer game total BEFORE this move
+    """
+    Plays a given move (from hint or AI) and updates game state.
+    Modifies board_tile_counts IN-PLACE.
+    Returns a tuple of updated game state variables including the new blanks_played_count and luck_factor.
+    """
+    # --- MODIFICATION: Ensure turn is an integer ---
+    turn_int = -1
+    if isinstance(current_turn, list):
+        if len(current_turn) == 1 and isinstance(current_turn[0], int):
+            turn_int = current_turn[0]
+        else:
+            # This case is problematic, indicates a deeper issue with 'turn' state
+            print(f"ERROR in play_hint_move: current_turn is a list but not a single int: {current_turn}")
+            # Fallback or raise error - for now, let's try to proceed if possible or default
+            # For the purpose of fixing the immediate TypeError, we need an int.
+            # This might lead to other logical errors if current_turn is truly messed up.
+            turn_int = 1 # Default to player 1 if turn is unrecoverable, or handle error appropriately
+    elif isinstance(current_turn, int):
+        turn_int = current_turn
+    else:
+        print(f"ERROR in play_hint_move: current_turn is not an int or a list: {type(current_turn)}, value: {current_turn}")
+        turn_int = 1 # Default or raise error
 
-def play_hint_move(move, tiles, racks, blanks, scores, turn, bag, board, 
-                   board_tile_counts, # This Counter object will be modified IN-PLACE
-                   blanks_played_count): # This is the integer game total BEFORE this move
-    """
-    Plays a move (usually from hint/AI), updates state. board_tile_counts is modified in-place.
-    Updates and returns the new total blanks_played_count for the game.
-    Returns: next_turn, drawn_tiles, newly_placed_details, 
-             updated_total_blanks_played_for_game
-    """
-    global practice_mode, is_ai 
+    turn = turn_int # Use 'turn' locally for convenience, as in the original error line
+    # --- END MODIFICATION ---
 
     player_idx = turn - 1
-    if not (0 <= player_idx < len(racks)):
-        print(f"Error: Invalid player index {player_idx} in play_hint_move.")
-        # Return the original blanks_played_count as no change occurred
-        return turn, [], [], blanks_played_count 
+    opponent_idx = 1 - player_idx
 
-    current_rack = racks[player_idx]
-    newly_placed_details = move.get('newly_placed', []) 
+    # Make copies of mutable game state parts to modify them safely
+    # For objects like lists of lists (tiles, board) or sets (blanks),
+    # a shallow copy might be enough if elements are immutable,
+    # but deepcopy is safer if unsure or if elements are mutable.
+    # However, for performance, direct modification of passed mutable
+    # objects (like current_rack, current_bag, current_blanks, current_tiles)
+    # is often done, with the understanding that the caller expects these modifications.
+    # Here, we are updating the actual game state variables passed in.
+
+    newly_placed_details = move.get('newly_placed', [])
     move_blanks_coords = move.get('blanks', set()) # Blanks specific to this move's placements
+    score = move.get('score', 0)
+    word = move.get('word', 'N/A')
+    start_pos = move.get('start', (0,0))
+    direction = move.get('direction', 'right')
+    is_bingo = move.get('is_bingo', False)
+    word_with_blanks_phm = move.get('word_with_blanks', '')
+    coord_phm = get_coord(start_pos, direction)
+    positions_phm = move.get('positions', []) # Full word positions
 
-    if not newly_placed_details:
-        print("Error playing move (play_hint_move): 'newly_placed' details are missing from the move dictionary.")
-        return turn, [], [], blanks_played_count
+    # Update tiles and blanks on the board
+    blanks_just_played_this_move = 0
+    tiles_placed_from_rack_sgs = [] # For SGS logging
+    blanks_played_info_sgs = []     # For SGS logging: (r, c, letter_assigned)
 
-    # --- Verification ---
-    needed_tiles_counter = Counter()
-    blanks_needed_for_this_move = 0
-    for r_ver, c_ver, letter_ver in newly_placed_details:
-        if (r_ver, c_ver) in move_blanks_coords:
-            blanks_needed_for_this_move += 1
-        else:
-            needed_tiles_counter[letter_ver] += 1
-    
+    # Log rack before modification for SGS
+    temp_rack_for_sgs_logging = Counter(current_rack)
+
+    for r_placed, c_placed, letter_placed in newly_placed_details:
+        if 0 <= r_placed < GRID_SIZE and 0 <= c_placed < GRID_SIZE:
+            current_tiles[r_placed][c_placed] = letter_placed
+            board_tile_counts[letter_placed] += 1 # Increment count for the letter on board
+
+            is_this_placement_a_blank = (r_placed, c_placed) in move_blanks_coords
+            if is_this_placement_a_blank:
+                current_blanks.add((r_placed, c_placed))
+                blanks_just_played_this_move += 1
+                blanks_played_info_sgs.append({'r': r_placed, 'c': c_placed, 'letter': letter_placed})
+
+
+            # For SGS: track tiles actually removed from rack
+            # This logic assumes newly_placed_details are only those from the rack
+            tile_to_log_removed = ' ' if is_this_placement_a_blank else letter_placed
+            if temp_rack_for_sgs_logging[tile_to_log_removed] > 0:
+                tiles_placed_from_rack_sgs.append(tile_to_log_removed)
+                temp_rack_for_sgs_logging[tile_to_log_removed] -= 1
+            elif temp_rack_for_sgs_logging[' '] > 0 and not is_this_placement_a_blank: # Used a blank for a non-blank letter
+                # This case should ideally be covered by is_this_placement_a_blank if move_blanks_coords is accurate
+                # However, if newly_placed has the final letter and move_blanks_coords marks it as blank,
+                # we need to ensure we log removal of ' ' from rack.
+                # The current logic for is_this_placement_a_blank should handle this.
+                # This part is more for if 'newly_placed' contains the *assigned* letter
+                # and we need to deduce if a blank was used from the rack.
+                # The `tile_to_log_removed` logic above should correctly identify ' ' if it was a blank.
+                pass
+
+
+    # Update player's score
+    current_score += score
+
+    # Update player's rack (remove played tiles)
+    # This needs careful handling of blanks. `newly_placed_details` contains the *assigned* letters.
+    # `move_blanks_coords` tells us which of those were blanks.
     rack_counter_current = Counter(current_rack)
-    if blanks_needed_for_this_move > rack_counter_current.get(' ', 0):
-        print(f"Error playing move (play_hint_move): Needs {blanks_needed_for_this_move} blanks, only {rack_counter_current.get(' ', 0)} available in rack: {current_rack}.")
-        print(f"Move details: {move}")
-        return turn, [], [], blanks_played_count
-    for letter_check, count_check in needed_tiles_counter.items():
-        if rack_counter_current.get(letter_check, 0) < count_check:
-            print(f"Error playing move (play_hint_move): Needs {count_check} '{letter_check}', only {rack_counter_current.get(letter_check, 0)} available in rack: {current_rack}.")
-            print(f"Move details: {move}")
-            return turn, [], [], blanks_played_count
-    # --- End Verification ---
+    for r_placed, c_placed, letter_placed in newly_placed_details:
+        tile_removed_from_rack = ' ' if (r_placed, c_placed) in move_blanks_coords else letter_placed
+        if rack_counter_current[tile_removed_from_rack] > 0:
+            rack_counter_current[tile_removed_from_rack] -= 1
+        # else: This would indicate an error - trying to play a tile not on the rack.
+            # print(f"Warning: Tile {tile_removed_from_rack} not found in rack for removal.")
 
-    rack_after_play = list(racks[player_idx]) # Work with a copy of the rack list
-    
-    blanks_increment_for_this_move = 0 # How many new blanks were put on board this move
+    current_rack[:] = list(rack_counter_current.elements()) # Update rack in place
 
-    for r, c, letter_on_board in newly_placed_details: 
-        tiles[r][c] = letter_on_board  # Modify main game tiles
-        board_tile_counts[letter_on_board] += 1 # MODIFIED IN-PLACE (Counter is mutable)
-
-        if (r, c) in move_blanks_coords: 
-            if ' ' in rack_after_play:
-                rack_after_play.remove(' ')
-                blanks.add((r, c)) # Modify main game blanks set
-                blanks_increment_for_this_move += 1
-            else:
-                print(f"Error (play_hint_move): Consistency issue. Move indicates blank at ({r},{c}) for '{letter_on_board}', but no blank tile found in rack_after_play: {rack_after_play}. Move: {move}")
-        else: 
-            if letter_on_board in rack_after_play: # letter_on_board is the tile from rack
-                rack_after_play.remove(letter_on_board)
-            else:
-                print(f"Error (play_hint_move): Tile '{letter_on_board}' for placement at ({r},{c}) not found in rack_after_play: {rack_after_play} and not marked as blank. Move: {move}")
-    
-    # Calculate the new total blanks played for the entire game
-    updated_total_blanks_played_for_game = blanks_played_count + blanks_increment_for_this_move
-
-    scores[player_idx] += move.get('score', 0) # Modify main game scores
-
+    # Draw new tiles from the bag
+    num_to_draw = len(newly_placed_details)
     drawn_tiles = []
-    if practice_mode != "eight_letter": 
-        num_to_draw = len(newly_placed_details) 
-        drawn_tiles = [bag.pop(0) for _ in range(num_to_draw) if bag] # Modify main game bag
-        rack_after_play.extend(drawn_tiles)
+    if current_bag: # Check if bag is not None
+        drawn_tiles = [current_bag.pop(0) for _ in range(num_to_draw) if current_bag]
+    current_rack.extend(drawn_tiles)
+    # random.shuffle(current_rack) # Optionally shuffle after drawing
 
-    if not is_ai[player_idx]: 
-        rack_after_play.sort()
-    
-    racks[player_idx] = rack_after_play # Update main game racks list
+    # Update game flow variables
+    if is_first_play:
+        is_first_play = False
+    consecutive_zero_point_turns = 0 # Reset on a successful play
+    pass_count = 0
+    exchange_count = 0
+    last_played_highlight_coords_for_return = set((pos[0], pos[1]) for pos in positions_phm if pos)
 
-    next_turn_val = turn if practice_mode == "eight_letter" else 3 - turn
 
-    # board_tile_counts was modified in-place. Return the new total blanks played.
-    return next_turn_val, drawn_tiles, newly_placed_details, updated_total_blanks_played_for_game
+    # Update total blanks played for the game
+    updated_total_blanks_played_for_game = blanks_played_count + blanks_just_played_this_move
+
+
+    # Calculate luck factor
+    luck_factor = 0.0
+    if drawn_tiles:
+        try:
+            # For luck calculation, we need the state of unseen tiles *before* this draw.
+            # This means using the board_tile_counts *before* this move's tiles were added,
+            # and blanks_played_count *before* this move's blanks were added.
+            # The `board_tile_counts` passed in is already updated with this move's tiles.
+            # So, we need to temporarily revert it for get_remaining_tiles.
+            board_tile_counts_before_luck = board_tile_counts.copy()
+            for r_placed, c_placed, letter_placed in newly_placed_details:
+                 board_tile_counts_before_luck[letter_placed] -=1
+                 if board_tile_counts_before_luck[letter_placed] == 0:
+                     del board_tile_counts_before_luck[letter_placed]
+
+            blanks_played_count_before_luck = blanks_played_count # This is the count *before* this move
+
+            luck_factor = calculate_luck_factor_cython(
+                drawn_tiles,
+                move.get('leave', []), # Rack *before* this play (leave from the move dict)
+                board_tile_counts_before_luck,
+                blanks_played_count_before_luck,
+                get_remaining_tiles # Pass the Python helper function
+            )
+        except Exception as e_luck_phm:
+            print(f"Error calculating luck factor in play_hint_move: {e_luck_phm}")
+            luck_factor = 0.0
+
+
+    # Record the move
+    move_data = {
+        'player': turn,
+        'move_type': 'place',
+        'word': word,
+        'score': score,
+        'positions': positions_phm, # Full word positions
+        'blanks': move_blanks_coords, # Blanks used in this specific play
+        'coord': coord_phm,
+        'is_bingo': is_bingo,
+        'rack': move.get('leave', []), # Rack *before* this play (leave from the move dict)
+        'word_with_blanks': word_with_blanks_phm,
+        'start': start_pos,
+        'direction': direction,
+        # SGS Specific Data
+        'newly_placed_details': newly_placed_details, # Tiles placed from rack with their letters
+        'tiles_placed_from_rack': tiles_placed_from_rack_sgs, # Actual characters (or ' ') removed from rack
+        'tiles_drawn_after_move': drawn_tiles,
+        'blanks_played_info': blanks_played_info_sgs, # List of {'r': r, 'c': c, 'letter': assigned_letter}
+        'luck_factor': luck_factor,
+        'game_duration_seconds': 0.0 # Placeholder, actual duration tracked by ai_turn or main loop
+    }
+    move_history_list.append(move_data)
+
+    # Determine next turn
+    next_turn_val = 3 - turn
+    if practice_mode == "eight_letter": # In 8-letter, player 1 keeps playing
+        next_turn_val = turn
+
+
+    # Return all updated state variables
+    return (
+        current_tiles, current_rack, current_blanks, current_score,
+        current_bag, is_first_play, consecutive_zero_point_turns,
+        pass_count, exchange_count, last_played_highlight_coords_for_return,
+        next_turn_val,
+        updated_total_blanks_played_for_game, # Return the new game total
+        luck_factor
+    )
 
 
 
@@ -5246,66 +5537,82 @@ def ai_turn(turn, racks, tiles, board, blanks, scores, bag, first_play,
 
 
 
-# In Scrabble_Game.py
-
-# (Import statements and other global variables like GADDAG_STRUCTURE, etc., remain as they are)
-# ...
-
+# Function to Replace: initialize_game
+# REASON: Handle loading from SGS format and remove GCG loading.
 def initialize_game(selected_mode_result, return_data, main_called_flag):
-    """
-    Initializes the game state based on the selected mode and data.
-    Starts background GADDAG loading if not already loaded/loading.
-    Returns the current GADDAG loading status along with other state variables.
-    Initializes and populates board_tile_counts.
-    Unpacks visualize_batch and cProfile settings, setting the global flag.
-    Adds debug print for 8-letter practice init.
-    Removes current_turn_pool_quality_score.
-    Ensures blanks_played_count is initialized and returned in all paths.
-    Correctly sets is_ai for MODE_AVA.
-    MODIFIED: Adds initial_shuffled_bag_order_sgs and initial_racks_sgs for SGS format.
-    """
-    global GADDAG_STRUCTURE, gaddag_loading_status, gaddag_load_thread
-    global DEVELOPER_PROFILE_ENABLED
-    global MODE_HVH, MODE_HVA, MODE_AVA
+    """Initializes or resets the game state based on the selected mode."""
 
-    print("--- initialize_game() entered ---")
+    print(f"DEBUG: initialize_game - Called with: selected_mode_result='{selected_mode_result}', main_called_flag={main_called_flag}")
+    print(f"DEBUG: initialize_game - return_data: {return_data}")
 
-    if not main_called_flag and gaddag_loading_status == 'idle':
-        print("--- initialize_game(): Starting GADDAG background load... ---")
+
+
+    
+    # Declare globals that will be set by this function
+    global board, tiles, racks, blanks, scores, turn, first_play, game_mode, is_ai
+    global practice_mode, move_history, replay_mode, current_replay_turn, bag
+    global player_names, human_player, last_word, last_score, last_start, last_direction
+    global pass_count, exchange_count, consecutive_zero_point_turns, last_played_highlight_coords
+    global USE_ENDGAME_SOLVER, USE_AI_SIMULATION, DEVELOPER_PROFILE_ENABLED
+    global is_batch_running, total_batch_games, current_batch_game_num, batch_results, initial_game_config
+    global practice_target_moves, practice_best_move, all_moves
+    global gaddag_loading_status, gaddag_load_thread, GADDAG_STRUCTURE, DAWG # For background loading
+    global is_solving_endgame, endgame_start_time
+    global board_tile_counts, blanks_played_count # Game-specific counters
+    global letter_checks, number_checks # For practice modes
+    global practice_probability_max_index
+    global replay_initial_shuffled_bag
+    
+    # SGS specific state variables
+    global initial_shuffled_bag_order_sgs, initial_racks_sgs
+
+    # --- Start GADDAG Loading if not already loading/loaded ---
+    if gaddag_loading_status == 'idle' and GADDAG_STRUCTURE is None:
+        print("--- initialize_game(): Starting GADDAG background load ---")
         gaddag_loading_status = 'loading'
-        GADDAG_STRUCTURE = None
-        gaddag_load_thread = threading.Thread(target=_load_gaddag_background, daemon=True)
-        gaddag_load_thread.start()
-    elif gaddag_loading_status == 'loading':
-        print("--- initialize_game(): GADDAG is already loading in the background. ---")
-    elif gaddag_loading_status == 'loaded':
-        print("--- initialize_game(): GADDAG is already loaded. ---")
-    elif gaddag_loading_status == 'error':
-        print("--- initialize_game(): GADDAG failed to load previously. AI features disabled. ---")
-        GADDAG_STRUCTURE = None
+        # Ensure DAWG is loaded before GADDAG thread starts if GADDAG depends on it
+        if DAWG is None:
+            try:
+                with open("dawg.pkl", "rb") as f_dawg: # Ensure DAWG filename is correct
+                    DAWG = pickle.load(f_dawg)
+                print("--- DAWG loaded successfully for GADDAG thread ---")
+            except FileNotFoundError:
+                print("--- FATAL ERROR: dawg.pkl not found. AI will not function. ---")
+                DAWG = None # Explicitly set to None
+                gaddag_loading_status = 'error' # Mark GADDAG as error too if DAWG fails
+            except Exception as e:
+                print(f"--- FATAL ERROR: Could not load dawg.pkl: {e} ---")
+                DAWG = None
+                gaddag_loading_status = 'error'
 
-    game_mode = None
-    is_loaded_game = False
-    player_names = ["Player 1", "Player 2"]
-    move_history = []
-    final_scores = None
-    replay_initial_shuffled_bag = None # For GCG replay
-    board, _, tiles = create_board()
+        if gaddag_loading_status == 'loading': # Proceed if DAWG loaded or was already loaded
+            gaddag_load_thread = threading.Thread(target=_load_gaddag_background, daemon=True)
+            gaddag_load_thread.start()
+
+    # Default initializations
+    board_init, labels_init, tiles_init = create_board() # Get initial board structure
+    board = board_init
+    tiles = tiles_init # Empty tiles
     scores = [0, 0]
     blanks = set()
     racks = [[], []]
-    bag = []
+    turn = 1
+    is_loaded_game = False
+    first_play = True
+    move_history = []
     replay_mode = False
     current_replay_turn = 0
+    bag = []
+    player_names = ["Player 1", "Player 2"] # Default
+    human_player = 1 # Default for HVA
+    is_ai = [False, False] # Default
     practice_mode = None
-    is_ai = [False, False]
-    human_player = 1
-    first_play = True
-    initial_racks = [[], []] # For GCG or general reference
-    number_checks = [True] * 6
-    letter_checks = [True] * 4
+    last_word, last_score, last_start, last_direction = "", 0, None, None
+    pass_count, exchange_count, consecutive_zero_point_turns = 0, 0, 0
+    last_played_highlight_coords = set()
     USE_ENDGAME_SOLVER = False
     USE_AI_SIMULATION = False
+    DEVELOPER_PROFILE_ENABLED = False
     is_batch_running = False
     total_batch_games = 0
     current_batch_game_num = 0
@@ -5313,288 +5620,298 @@ def initialize_game(selected_mode_result, return_data, main_called_flag):
     initial_game_config = {}
     practice_target_moves = []
     practice_best_move = None
-    all_moves = []
-    turn = 1
-    pass_count = 0
-    exchange_count = 0
-    consecutive_zero_point_turns = 0
-    last_played_highlight_coords = set()
+    all_moves = [] # Crucial for AI and hints
     is_solving_endgame = False
+    endgame_start_time = 0
     board_tile_counts = Counter()
-    visualize_batch = False
-    cprofile_enabled = False
-    practice_probability_max_index = None
     blanks_played_count = 0
+    letter_checks = [True] * 4 # Default for power tiles
+    number_checks = [True, True, True, True, False, False] # Default for power tiles (2,3,4,5,6,7+)
+    practice_probability_max_index = None
 
-    # --- SGS Specific Variables ---
-    initial_shuffled_bag_order_sgs = [] # Default to empty list
-    initial_racks_sgs = [[], []]        # Default to empty racks
+    # SGS specific state variables - initialized
+    initial_shuffled_bag_order_sgs = []
+    initial_racks_sgs = [[], []]
+    replay_initial_shuffled_bag = None
 
-    print(f"--- initialize_game(): Starting game state initialization for mode: {selected_mode_result} ---")
-    if selected_mode_result == "LOADED_GAME": # This implies GCG for now
-        print("--- initialize_game(): Handling LOADED_GAME (GCG) setup ---")
-        game_mode = "LOADED_GAME"; is_loaded_game = True
-        player_names, loaded_history, final_scores_loaded = return_data
-        move_history = loaded_history; final_scores = final_scores_loaded
-        
-        # For GCG replay, we still need to simulate a bag if we don't have drawn tiles
-        base_bag_gcg = create_standard_bag(); random.shuffle(base_bag_gcg); replay_initial_shuffled_bag = base_bag_gcg[:]
-        
-        scores = [0, 0]; blanks = set(); racks = [[], []]; bag = [] # Bag is effectively empty for GCG replay start
-        replay_mode = True; current_replay_turn = 0; practice_mode = None; is_ai = [False, False]; human_player = 1; first_play = False
-        initial_racks = [[], []] # Will be determined by GCG simulation
-        number_checks = [True] * 6
-        USE_ENDGAME_SOLVER = True # Default for loaded games, can be overridden by user later if UI allows
-        USE_AI_SIMULATION = False
-        
-        # Initialize board_tile_counts and blanks_played_count by simulating up to turn 0 (initial board)
-        tiles_loaded, blanks_loaded_sim, _, _ = simulate_game_up_to(0, move_history, replay_initial_shuffled_bag)
-        board_tile_counts = Counter()
-        for r_idx in range(GRID_SIZE):
-            for c_idx in range(GRID_SIZE):
-                if tiles_loaded[r_idx][c_idx]:
-                    board_tile_counts[tiles_loaded[r_idx][c_idx]] += 1
-        # For GCG, blanks_played_count needs to be derived by stepping through history if needed,
-        # or assume 0 if not explicitly tracked by GCG loading. For simplicity now, 0.
-        blanks_played_count = 0 # GCG doesn't directly give us this easily without full parse.
-                                # If SGS becomes primary, this path might be removed or simplified.
 
-        visualize_batch = False
-        cprofile_enabled = False
-        DEVELOPER_PROFILE_ENABLED = False
-        practice_probability_max_index = None
-        # SGS variables remain default/empty as this is GCG loading
-        print(f"--- initialize_game(): Loaded Game (GCG) Setup Complete. Players: {player_names}, Moves: {len(move_history)} ---")
+    if selected_mode_result == "LOADED_SGS_GAME":
+        print("--- Initializing from LOADED_SGS_GAME ---")
+        is_loaded_game = True
+        loaded_data = return_data # This is the dictionary from load_game_from_sgs
+        if loaded_data:
+            player_names = loaded_data.get('player_names', ["P1", "P2"])
+            game_mode = loaded_data.get('game_mode', MODE_HVH) # Default if missing
+            is_ai = loaded_data.get('is_ai', [False, False])
+            practice_mode = loaded_data.get('practice_mode', None)
+            USE_ENDGAME_SOLVER = loaded_data.get('use_endgame_solver_setting', False)
+            USE_AI_SIMULATION = loaded_data.get('use_ai_simulation_setting', False)
+            
+            initial_shuffled_bag_order_sgs = loaded_data.get('initial_shuffled_bag_order_sgs', [])
+            initial_racks_sgs = loaded_data.get('initial_racks_sgs', [[],[]])
+            move_history = loaded_data.get('move_history', [])
+            # final_scores_loaded = loaded_data.get('final_scores', [0,0]) # For display if game was over
 
-    elif selected_mode_result == "BATCH_MODE":
+            # For SGS replay, we set the game to replay mode and simulate up to the end.
+            # The actual game state (tiles, racks, bag, scores) will be derived by
+            # simulating the game from the initial_shuffled_bag and initial_racks_sgs
+            # using the move_history.
+            replay_mode = True
+            current_replay_turn = len(move_history) # Start replay at the end to show final state
+            
+            # Simulate game to get current board state for display if needed,
+            # but for replay, draw_game_screen handles this dynamically.
+            # We need to ensure the bag for get_replay_state is the one from SGS.
+            if initial_shuffled_bag_order_sgs and initial_racks_sgs:
+                sim_board, sim_tiles, sim_racks, sim_blanks, sim_scores, sim_bag, sim_turn, sim_first_play, _, _, _, sim_board_counts, sim_blanks_played = simulate_game_up_to(
+                    len(move_history), # Simulate all moves
+                    move_history,
+                    initial_shuffled_bag_order_sgs[:], # Pass a copy
+                    initial_racks_sgs # Pass initial racks from SGS
+                )
+                # Set the live game state to the final simulated state for consistency
+                # though replay drawing will mostly use get_replay_state.
+                board = sim_board
+                tiles = sim_tiles
+                racks = sim_racks
+                blanks = sim_blanks
+                scores = sim_scores
+                bag = sim_bag # Bag will be empty if game played out
+                turn = sim_turn
+                first_play = sim_first_play
+                board_tile_counts = sim_board_counts
+                blanks_played_count = sim_blanks_played
+            else:
+                print("--- WARNING: SGS loaded but initial bag/rack info missing. Replay might be inaccurate. ---")
+                # Fallback: create a default bag for get_replay_state if needed by its logic
+                # but ideally, SGS always has this.
+                bag = create_standard_bag() # This is a guess if SGS data is incomplete
+                random.shuffle(bag)
+                initial_shuffled_bag_order_sgs = bag[:] # Store this guess
+
+            print(f"--- SGS Game Loaded. Player Names: {player_names}, Mode: {game_mode}, Moves: {len(move_history)} ---")
+            # DEVELOPER_PROFILE_ENABLED is not typically stored per-game, but per-session.
+            # It would be set if 'cprofile_checked' was true from mode_selection_screen for a batch.
+        else:
+            print("--- ERROR: initialize_game called with LOADED_SGS_GAME but no data. ---")
+            # Fallback to a default new game or handle error
+            selected_mode_result = MODE_HVH # Fallback to HVH
+            # Proceed to standard new game setup below
+
+    # Handle BATCH_MODE (largely unchanged, but uses SGS initial state)
+    if selected_mode_result == "BATCH_MODE":
         is_batch_running = True
         try:
-            game_mode_batch, player_names_batch, human_player_batch, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked, cprofile_checked = return_data
-            visualize_batch = visualize_batch_checked
-            cprofile_enabled = cprofile_checked
+            # Unpack data for batch mode
+            (game_mode_batch, player_names_batch, human_player_batch,
+             use_endgame_solver_checked, use_ai_simulation_checked, num_games,
+             visualize_batch_checked, cprofile_checked) = return_data
         except ValueError:
-             print("Error: Incorrect number of values unpacked for BATCH_MODE setup. Using defaults.")
-             game_mode_batch, player_names_batch, human_player_batch, use_endgame_solver_checked, use_ai_simulation_checked, num_games, visualize_batch_checked = return_data # Original 7
-             cprofile_enabled = False # Default if not unpacked
-             visualize_batch = visualize_batch_checked if 'visualize_batch_checked' in locals() else False
+            print("--- ERROR: Incorrect data structure for BATCH_MODE in initialize_game. ---")
+            # Handle error, perhaps by exiting or defaulting
+            return False # Signal an error to stop
 
-
-        DEVELOPER_PROFILE_ENABLED = cprofile_enabled
+        DEVELOPER_PROFILE_ENABLED = cprofile_checked
         total_batch_games = num_games
-        current_batch_game_num = 1 # Will be incremented in main loop
-        batch_results = []
+        current_batch_game_num = 0 # Will be incremented to 1 before first game loop
+
         USE_ENDGAME_SOLVER = use_endgame_solver_checked
         USE_AI_SIMULATION = use_ai_simulation_checked
-        practice_mode = None
-        letter_checks = [True]*4
-        number_checks = [True]*6
         
+        # Determine batch filename prefix
         batch_now = datetime.datetime.now()
         batch_date_str = batch_now.strftime("%d%b%y").upper()
         batch_time_str = batch_now.strftime("%H%M")
-        batch_seq_num = 1; max_existing_batch_num = 0
-        try:
-            for filename_iter in os.listdir('.'):
-                if filename_iter.startswith(f"{batch_date_str}-") and filename_iter.endswith(".txt") and "-BATCH-" in filename_iter:
-                    parts = filename_iter[:-4].split('-');
-                    if len(parts) == 4 and parts[2] == "BATCH" and parts[-1].isdigit():
-                        num = int(parts[-1]); max_existing_batch_num = max(max_existing_batch_num, num)
-            batch_seq_num = max_existing_batch_num + 1
-        except OSError as e: print(f"Warning: Error listing directory for batch sequence number: {e}. Using sequence 1.")
+        batch_seq_num = 1
+        max_existing_batch_num = 0
+        for filename_iter in os.listdir("."): # Check for existing batch summary files
+            if filename_iter.startswith(f"{batch_date_str}-{batch_time_str}-BATCH-") and filename_iter.endswith(".txt"):
+                try:
+                    parts = filename_iter[:-4].split('-')
+                    if parts[-1].isdigit():
+                        num = int(parts[-1])
+                        max_existing_batch_num = max(max_existing_batch_num, num)
+                except ValueError: pass
+        batch_seq_num = max_existing_batch_num + 1
         batch_base_filename_prefix = f"{batch_date_str}-{batch_time_str}-BATCH-{batch_seq_num}"
 
         initial_game_config = {
-            'game_mode': game_mode_batch, 'player_names': player_names_batch, 'human_player': human_player_batch,
-            'use_endgame_solver': USE_ENDGAME_SOLVER, 'use_ai_simulation': USE_AI_SIMULATION,
-            'batch_filename_prefix': batch_base_filename_prefix,
-            'visualize_batch': visualize_batch,
-            'cprofile_enabled': cprofile_enabled
+            'game_mode': game_mode_batch,
+            'player_names': player_names_batch,
+            'human_player': human_player_batch, # Not directly used if all AI, but good to store
+            'use_endgame_solver': USE_ENDGAME_SOLVER,
+            'use_ai_simulation': USE_AI_SIMULATION,
+            'visualize_batch': visualize_batch_checked,
+            'cprofile_enabled': DEVELOPER_PROFILE_ENABLED,
+            'batch_filename_prefix': batch_base_filename_prefix
         }
-        
         is_ai_batch = [False, False]
-        if initial_game_config['game_mode'] == MODE_HVA: is_ai_batch[2 - initial_game_config['human_player']] = True
-        elif initial_game_config['game_mode'] == MODE_AVA: is_ai_batch = [True, True]
+        if initial_game_config['game_mode'] == MODE_HVA:
+            is_ai_batch = [False, True] if human_player_batch == 1 else [True, False]
+        elif initial_game_config['game_mode'] == MODE_AVA:
+            is_ai_batch = [True, True]
         initial_game_config['is_ai'] = is_ai_batch
-        is_ai = is_ai_batch # Set the main is_ai
-        player_names = player_names_batch # Set main player_names
-        game_mode = game_mode_batch # Set main game_mode
 
-        # For the first game of the batch, we do a full setup including SGS vars
-        # Subsequent games in the batch will be reset by reset_game_state
-        
+        # Set main game variables for the first game of the batch
+        is_ai = is_ai_batch
+        player_names = player_names_batch
+        game_mode = game_mode_batch
+
         # --- SGS Setup for the first batch game ---
-        bag_for_dealing_sgs = create_standard_bag()
-        random.shuffle(bag_for_dealing_sgs)
-        initial_shuffled_bag_order_sgs = list(bag_for_dealing_sgs) # Store full shuffled order
+        bag_for_dealing_sgs_batch = create_standard_bag()
+        random.shuffle(bag_for_dealing_sgs_batch)
+        initial_shuffled_bag_order_sgs = list(bag_for_dealing_sgs_batch) # Store full shuffled order
+        bag = list(initial_shuffled_bag_order_sgs) # Gameplay bag for the first game
 
-        bag = list(initial_shuffled_bag_order_sgs) # Gameplay bag
-        racks_batch = [[], []]
-        try:
-            racks_batch[0] = [bag.pop(0) for _ in range(7)]
-            racks_batch[1] = [bag.pop(0) for _ in range(7)]
-        except IndexError:
-            print("FATAL: Not enough tiles for initial batch game deal.")
-            pygame.quit(); sys.exit()
-        
-        initial_racks_sgs = [list(racks_batch[0]), list(racks_batch[1])]
-        racks = racks_batch # Update main racks
+        racks_batch_init = [[], []]
+        for i in range(2):
+            try:
+                racks_batch_init[i] = [bag.pop(0) for _ in range(7)]
+            except IndexError:
+                print("Error: Not enough tiles in bag for initial deal in batch setup.")
+                return False # Indicate failure
+        initial_racks_sgs = [list(racks_batch_init[0]), list(racks_batch_init[1])]
+        racks = racks_batch_init # Update main racks for the first game
         # --- End SGS Setup for first batch game ---
 
-        # Other state for the first batch game
-        scores = [0,0]; turn = 1; blanks = set(); first_play = True; move_history = []
-        pass_count = 0; exchange_count = 0; consecutive_zero_point_turns = 0
-        last_played_highlight_coords = set(); is_solving_endgame = False
-        board_tile_counts = Counter(); blanks_played_count = 0
-        
-        for i_batch, rack_content_batch in enumerate(racks):
-            if 0 <= i_batch < len(is_ai) and not is_ai[i_batch]: rack_content_batch.sort()
-        
-        initial_racks = [r[:] for r in racks] # GCG-style initial racks (after deal)
-        practice_probability_max_index = None
-        print(f"--- initialize_game(): Batch Mode Setup Complete. Running {total_batch_games} games. Visualize: {visualize_batch}. cProfile: {cprofile_enabled}. Base Filename Prefix: {batch_base_filename_prefix} ---")
+        # Other state for the first batch game (already defaulted, e.g., scores, turn, etc.)
+        # board_tile_counts and blanks_played_count are already 0/empty Counter
 
-    elif selected_mode_result is not None: # Normal New Game or Practice
-        print(f"--- initialize_game(): Handling New Game Setup ({selected_mode_result}) ---")
+    # Handle New Game or Practice Mode (if not LOADED_SGS_GAME or BATCH_MODE)
+    elif selected_mode_result not in ["LOADED_SGS_GAME", "BATCH_MODE"] and selected_mode_result is not None:
+        game_mode = selected_mode_result # Set game_mode from selection screen
         try:
-            player_names_new, human_player_new, practice_mode_new, letter_checks_new, number_checks_new, use_endgame_solver_checked, use_ai_simulation_checked, practice_state, visualize_batch_checked, cprofile_checked = return_data
-            cprofile_enabled = cprofile_checked
-            # Update main game vars
-            player_names = player_names_new
-            human_player = human_player_new
-            practice_mode = practice_mode_new
-            letter_checks = letter_checks_new
-            number_checks = number_checks_new
+            (player_names_new, human_player_new, practice_mode_new,
+            letter_checks_new, number_checks_new, use_endgame_solver_checked,
+            use_ai_simulation_checked, practice_state, visualize_batch_checked, # visualize not used here
+            cprofile_checked, practice_prob_max_idx) = return_data # Unpack 11 items
         except ValueError:
-             print("Error: Incorrect number of values unpacked for New Game setup. Using defaults.")
-             player_names_new, human_player_new, practice_mode_new, letter_checks_new, number_checks_new, use_endgame_solver_checked, use_ai_simulation_checked, practice_state, visualize_batch_checked = return_data # Original 9
-             cprofile_enabled = False
-             # Update main game vars with defaults or unpacked
-             player_names = player_names_new if 'player_names_new' in locals() else ["P1", "P2"]
-             human_player = human_player_new if 'human_player_new' in locals() else 1
-             practice_mode = practice_mode_new if 'practice_mode_new' in locals() else None
-             letter_checks = letter_checks_new if 'letter_checks_new' in locals() else [True]*4
-             number_checks = number_checks_new if 'number_checks_new' in locals() else [True]*6
+             print("--- ERROR: Incorrect data structure for New Game/Practice in initialize_game. ---")
+             return False # Signal error
 
-
-        DEVELOPER_PROFILE_ENABLED = cprofile_enabled
+        # Update main game vars
+        player_names = player_names_new
+        human_player = human_player_new
+        practice_mode = practice_mode_new
+        letter_checks = letter_checks_new
+        number_checks = number_checks_new
         USE_ENDGAME_SOLVER = use_endgame_solver_checked
         USE_AI_SIMULATION = use_ai_simulation_checked
-        print(f"--- initialize_game(): Use Endgame Solver set to: {USE_ENDGAME_SOLVER} ---")
-        print(f"--- initialize_game(): Use AI Simulation set to: {USE_AI_SIMULATION} ---")
-        print(f"--- initialize_game(): cProfile Enabled set to: {DEVELOPER_PROFILE_ENABLED} ---")
+        DEVELOPER_PROFILE_ENABLED = cprofile_checked
+        practice_probability_max_index = practice_prob_max_idx
 
-        blanks_played_count = 0
 
-        if practice_state and practice_mode == "eight_letter":
-            print("Loading state from 8-letter practice...");
-            board, tiles, racks, blanks, bag, scores, turn, first_play = practice_state["board"], practice_state["tiles"], practice_state["racks"], practice_state["blanks"], practice_state["bag"], practice_state["scores"], practice_state["turn"], practice_state["first_play"];
-            practice_probability_max_index = practice_state.get("practice_probability_max_index")
-            is_ai = [False, False]; 
-            board_tile_counts = Counter(c for row in tiles for c in row if c)
-            blanks_played_count = 0 # Blanks usually not pre-set in this practice
-            print("--- initialize_game(): Loaded state from 8-letter practice. ---")
-            practice_target_moves = []
-            print(f"  DEBUG initialize_game (8-letter): Reset practice_target_moves. Length is now: {len(practice_target_moves)}")
-            practice_best_move = None
-            all_moves = []
-            # SGS variables remain default/empty for this specific practice mode setup
-            initial_shuffled_bag_order_sgs = [] # No real bag
+        if practice_mode == "eight_letter" and practice_state:
+            board = practice_state.get('board', board)
+            tiles = practice_state.get('tiles', tiles)
+            racks = practice_state.get('racks', racks)
+            blanks = practice_state.get('blanks', blanks)
+            bag = practice_state.get('bag', []) # Usually empty for 8-letter
+            first_play = practice_state.get('first_play', False)
+            scores = practice_state.get('scores', [0,0])
+            turn = practice_state.get('turn', 1)
+            # Calculate board_tile_counts from the placed tiles in practice_state
+            board_tile_counts = Counter(t for row in tiles for t in row if t)
+            blanks_played_count = sum(1 for r,c in blanks if tiles[r][c]) # Count blanks on board
+
+            # SGS variables for this specific practice mode setup
+            initial_shuffled_bag_order_sgs = [] # No real bag for this practice
             initial_racks_sgs = [list(racks[0]), list(racks[1])] if racks and len(racks) == 2 else [[],[]]
 
+        elif practice_state: # Other practice modes might pre-set state (less common now)
+            board = practice_state.get('board', board)
+            tiles = practice_state.get('tiles', tiles)
+            racks = practice_state.get('racks', racks)
+            blanks = practice_state.get('blanks', blanks)
+            bag = practice_state.get('bag', bag)
+            first_play = practice_state.get('first_play', first_play)
+            scores = practice_state.get('scores', scores)
+            turn = practice_state.get('turn', turn)
+            board_tile_counts = Counter(t for row in tiles for t in row if t)
+            blanks_played_count = sum(1 for r,c in blanks if tiles[r][c])
 
-        elif practice_state: # Other practice modes might pre-set state
-            print("Loading state from other practice mode...");
-            board, tiles, racks, blanks, bag, scores, turn, first_play = practice_state["board"], practice_state["tiles"], practice_state["racks"], practice_state["blanks"], practice_state["bag"], practice_state["scores"], practice_state["turn"], practice_state["first_play"];
-            is_ai_practice = [False, False]
-            game_mode = selected_mode_result
-            if game_mode == MODE_HVA: is_ai_practice[2 - human_player] = True
-            elif game_mode == MODE_AVA or practice_mode == "power_tiles" or practice_mode == "bingo_bango_bongo": is_ai_practice = [True, True];
-            is_ai = is_ai_practice
-            board_tile_counts = Counter(c for row in tiles for c in row if c)
-            blanks_played_count = 0 # Assume 0 for these practice starts unless specified
-            practice_probability_max_index = None
-            # SGS variables might be relevant if these practice modes have a "bag"
-            if bag: # If a bag was defined for the practice state
-                initial_shuffled_bag_order_sgs = list(bag) # Assume the practice bag is the "shuffled order"
-                initial_racks_sgs = [list(racks[0]), list(racks[1])] if racks and len(racks) == 2 else [[],[]]
-            else:
-                initial_shuffled_bag_order_sgs = []
-                initial_racks_sgs = [list(racks[0]), list(racks[1])] if racks and len(racks) == 2 else [[],[]]
+            if bag:
+                initial_shuffled_bag_order_sgs = list(bag)
+            else: # If no bag in practice state, create a default one for SGS consistency if needed
+                temp_bag = create_standard_bag()
+                random.shuffle(temp_bag)
+                initial_shuffled_bag_order_sgs = temp_bag[:]
+            initial_racks_sgs = [list(racks[0]), list(racks[1])] if racks and len(racks) == 2 else [[],[]]
 
-            print(f"--- initialize_game(): Loaded state from other practice mode. is_ai: {is_ai} ---")
         else: # Standard new game (non-batch, non-practice-state)
-            print("Performing standard game initialization (non-batch)...");
-            
-            bag_for_dealing_sgs = create_standard_bag()
-            random.shuffle(bag_for_dealing_sgs)
-            initial_shuffled_bag_order_sgs = list(bag_for_dealing_sgs)
-
+            bag_for_dealing_sgs_new = create_standard_bag()
+            random.shuffle(bag_for_dealing_sgs_new)
+            initial_shuffled_bag_order_sgs = list(bag_for_dealing_sgs_new)
             bag = list(initial_shuffled_bag_order_sgs) # Gameplay bag
-            racks = [[], []]
-            scores = [0, 0]
-            turn = 1
-            blanks = set()
-            first_play = True
-            board_tile_counts = Counter()
-            blanks_played_count = 0
-            try:
-                racks[0] = [bag.pop(0) for _ in range(7)]
-                racks[1] = [bag.pop(0) for _ in range(7)]
-            except IndexError:
-                print("Error: Not enough tiles in bag."); pygame.quit(); sys.exit()
 
+            for i in range(2): # Deal racks
+                try:
+                    racks[i] = [bag.pop(0) for _ in range(7)]
+                except IndexError:
+                    print("Error: Not enough tiles in bag for initial deal.")
+                    return False # Indicate failure
             initial_racks_sgs = [list(racks[0]), list(racks[1])]
+            # board_tile_counts and blanks_played_count remain 0/empty
 
-            is_ai_new = [False, False]
-            game_mode = selected_mode_result
-            if game_mode == MODE_HVA:
-                is_ai_new[2 - human_player] = True
-            elif game_mode == MODE_AVA:
-                is_ai_new = [True, True]
-            is_ai = is_ai_new
+        # Determine is_ai for new game/practice
+        if game_mode == MODE_HVH: is_ai = [False, False]
+        elif game_mode == MODE_HVA:
+            is_ai = [False, True] if human_player == 1 else [True, False]
+        elif game_mode == MODE_AVA or practice_mode == "power_tiles" or practice_mode == "bingo_bango_bongo":
+            is_ai = [True, True]
+        
+        # Sort human racks for new games if applicable
+        for i in range(2):
+            if not is_ai[i] and racks[i]:
+                racks[i].sort()
 
-            print(f"--- initialize_game(): Initialized is_ai: {is_ai} ---")
-            for i_new, rack_content_new in enumerate(racks):
-                if 0 <= i_new < len(is_ai) and not is_ai[i_new]: rack_content_new.sort()
-            
-            practice_probability_max_index = None
-            print(f"--- initialize_game(): Performed standard game initialization. is_ai: {is_ai} ---")
-            print(f"    Initial Shuffled Bag (first 15 for SGS): {initial_shuffled_bag_order_sgs[:15]}")
-            print(f"    Initial Racks (for SGS): P1={initial_racks_sgs[0]}, P2={initial_racks_sgs[1]}")
+    elif selected_mode_result is None and not main_called_flag: # User quit from mode selection
+        print("--- Exiting from mode selection screen. ---")
+        return False # Signal to exit run_game_loop
+
+    elif selected_mode_result is None and main_called_flag: # Should not happen if main_called is managed correctly
+        print("--- initialize_game: selected_mode_result is None but main_called was true. Exiting. ---")
+        return False
+
+    else: # Should ideally not be reached if selected_mode_result is always handled
+        print(f"--- initialize_game: Unhandled selected_mode_result '{selected_mode_result}'. Defaulting or erroring. ---")
+        # Fallback to a default new game (HVH)
+        game_mode = MODE_HVH
+        is_ai = [False, False]
+        bag_for_dealing_sgs_fallback = create_standard_bag()
+        random.shuffle(bag_for_dealing_sgs_fallback)
+        initial_shuffled_bag_order_sgs = list(bag_for_dealing_sgs_fallback)
+        bag = list(initial_shuffled_bag_order_sgs)
+        for i in range(2):
+            try: racks[i] = [bag.pop(0) for _ in range(7)]
+            except IndexError: return False
+        initial_racks_sgs = [list(racks[0]), list(racks[1])]
 
 
-        initial_racks = [rack_content[:] for rack_content in racks] # GCG-style initial racks
-        visualize_batch = False
+    # Ensure critical SGS variables are populated even if a strange path was taken
+    if not initial_shuffled_bag_order_sgs and not replay_mode and not is_batch_running: # If it's a new game type and bag wasn't set
+        print("--- WARNING: initial_shuffled_bag_order_sgs was empty, creating default. ---")
+        temp_bag_sgs = create_standard_bag()
+        random.shuffle(temp_bag_sgs)
+        initial_shuffled_bag_order_sgs = temp_bag_sgs[:]
+        # Bag itself might need to be repopulated if it was also empty
+        if not bag and not practice_mode: # Don't override practice bags that are meant to be empty
+            bag = list(initial_shuffled_bag_order_sgs)
+            # Re-deal racks if bag was just created and racks are empty
+            if not racks[0] and not racks[1] and not practice_mode:
+                 for i in range(2):
+                    try: racks[i] = [bag.pop(0) for _ in range(7)]
+                    except IndexError: pass # Should not happen if bag just created
+                 initial_racks_sgs = [list(racks[0]), list(racks[1])]
 
-    elif selected_mode_result is None:
-        print("--- initialize_game(): Mode selection returned None. Exiting. ---")
-        pygame.quit()
-        sys.exit()
-    else: # Should not be reached
-        print(f"--- initialize_game(): Unhandled selected_mode_result: {selected_mode_result}. Exiting. ---")
-        pygame.quit()
-        sys.exit()
+
+    if not initial_racks_sgs[0] and not initial_racks_sgs[1] and racks[0] and racks[1] and not replay_mode:
+        # If SGS initial racks are empty but live racks have been dealt (e.g. new game)
+        initial_racks_sgs = [list(racks[0]), list(racks[1])]
 
 
-    # Ensure these are defined for the return statement, even if defaults
-    if 'initial_shuffled_bag_order_sgs' not in locals(): initial_shuffled_bag_order_sgs = []
-    if 'initial_racks_sgs' not in locals(): initial_racks_sgs = [[],[]]
-    if 'game_mode' not in locals(): game_mode = "UNKNOWN" # Fallback
-    # ... add similar checks for other critical variables if there are complex paths ...
-
-    return (game_mode, is_loaded_game, player_names, move_history, final_scores,
-            replay_initial_shuffled_bag, board, tiles, scores, blanks, racks, bag,
-            replay_mode, current_replay_turn, practice_mode, is_ai, human_player,
-            first_play, initial_racks, number_checks, USE_ENDGAME_SOLVER,
-            USE_AI_SIMULATION, is_batch_running, total_batch_games,
-            current_batch_game_num, batch_results, initial_game_config,
-            GADDAG_STRUCTURE, practice_target_moves, practice_best_move, all_moves,
-            letter_checks, turn, pass_count, exchange_count, consecutive_zero_point_turns,
-            last_played_highlight_coords, is_solving_endgame, gaddag_loading_status,
-            board_tile_counts, visualize_batch, cprofile_enabled,
-            practice_probability_max_index, blanks_played_count,
-            initial_shuffled_bag_order_sgs,
-            initial_racks_sgs)
+    # Return True to indicate successful initialization and continue to game loop
+    return True
 
 
 
@@ -7006,21 +7323,64 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
             if game_over_state:
                 # ... (existing logic) ...
                 if save_rect and save_rect.collidepoint(x, y):
-                    if final_scores and player_names and move_history and initial_racks:
-                        gcg_content = save_game_to_gcg(player_names, move_history, initial_racks, final_scores); now = datetime.datetime.now(); date_str = now.strftime("%d%b%y").upper(); time_str = now.strftime("%H%M"); seq_num = 1; max_existing_num = 0
-                        try:
-                            for filename in os.listdir('.'):
-                                if filename.startswith(f"{date_str}-") and filename.endswith(".gcg") and "-GAME-" in filename:
-                                    parts = filename[:-4].split('-');
-                                    if len(parts) >= 4 and parts[2] == "GAME":
-                                        if parts[-1].isdigit(): num = int(parts[-1]); max_existing_num = max(max_existing_num, num)
+                    if save_rect and save_rect.collidepoint(x, y):
+                        # Check for essential data for saving (move_history is a good proxy)
+                        if move_history:
+                            # --- Determine Filename and Sequence Number for SGS ---
+                            now = datetime.datetime.now()
+                            date_str = now.strftime("%d%b%y").upper()
+                            time_str = now.strftime("%H%M")
+                            seq_num = 1
+                            max_existing_num = 0
+                            # Check for existing SGS files to determine sequence number
+                            for filename_iter in os.listdir("."):
+                                if filename_iter.startswith(f"{date_str}-{time_str}-GAME-") and filename_iter.endswith(".sgs"):
+                                    try:
+                                        base_name = filename_iter[:-4] # Remove .sgs
+                                        parts = base_name.split('-')
+                                        if parts[-1].isdigit():
+                                            num = int(parts[-1])
+                                            max_existing_num = max(max_existing_num, num)
+                                    except ValueError:
+                                        pass # Ignore files not matching the number pattern
                             seq_num = max_existing_num + 1
-                        except OSError as e: print(f"Error listing directory for save sequence number: {e}")
-                        save_filename = f"{date_str}-{time_str}-GAME-{seq_num}.gcg"
-                        try:
-                            with open(save_filename, "w") as f: f.write(gcg_content); print(f"Game saved to {save_filename}"); show_message_dialog(f"Game saved to:\n{save_filename}", "Game Saved")
-                        except IOError as e: print(f"Error saving game to {save_filename}: {e}"); show_message_dialog(f"Error saving game: {e}", "Save Error")
-                    else: print("Error: Missing data required for saving."); show_message_dialog("Could not save game: Missing data.", "Save Error")
+
+                            save_filename_sgs = f"{date_str}-{time_str}-GAME-{seq_num}.sgs"
+
+                            # --- SGS Saving ---
+                            # Gather data for SGS from the current game state
+                            # Ensure 'initial_shuffled_bag_order_sgs' and 'initial_racks_sgs' are correctly sourced from 'state'
+                            initial_bag_sgs_present = bool(state.get('initial_shuffled_bag_order_sgs'))
+                            initial_racks_sgs_p1_present = bool(state.get('initial_racks_sgs') and state['initial_racks_sgs'][0])
+                            initial_racks_sgs_p2_present = bool(state.get('initial_racks_sgs') and len(state['initial_racks_sgs']) > 1 and state['initial_racks_sgs'][1])
+
+                            if initial_bag_sgs_present and initial_racks_sgs_p1_present and initial_racks_sgs_p2_present:
+                                sgs_game_data = {
+                                    'player_names': player_names, # From state
+                                    'game_mode': state.get('game_mode', 'UNKNOWN'),
+                                    'is_ai': state.get('is_ai', [False, False]),
+                                    'practice_mode': state.get('practice_mode', None),
+                                    'use_endgame_solver_setting': state.get('USE_ENDGAME_SOLVER', False),
+                                    'use_ai_simulation_setting': state.get('USE_AI_SIMULATION', False),
+                                    'initial_shuffled_bag_order_sgs': state.get('initial_shuffled_bag_order_sgs'),
+                                    'initial_racks_sgs': state.get('initial_racks_sgs'),
+                                    'move_history': move_history, # From state
+                                    'final_scores': final_scores, # From state (game over scores)
+                                    'sgs_version': "1.0",
+                                    'timestamp': now.isoformat()
+                                }
+                                if save_game_to_sgs(save_filename_sgs, sgs_game_data):
+                                    show_message_dialog(f"Game saved as:\n{save_filename_sgs}", "Game Saved")
+                                else:
+                                    show_message_dialog(f"Error saving game to:\n{save_filename_sgs}\nCheck console.", "Save Error")
+                            else:
+                                print(f"--- SGS save failed for {save_filename_sgs}: Essential initial SGS data missing from game state. ---")
+                                print(f"    Initial Bag Order SGS: {'Present' if initial_bag_sgs_present else 'Missing (state[\'initial_shuffled_bag_order_sgs\'])'}")
+                                print(f"    Initial Racks SGS P1: {'Present' if initial_racks_sgs_p1_present else 'Missing (state[\'initial_racks_sgs\'][0])'}")
+                                print(f"    Initial Racks SGS P2: {'Present' if initial_racks_sgs_p2_present else 'Missing (state[\'initial_racks_sgs\'][1])'}")
+                                show_message_dialog("Error saving game:\nKey initial data missing.\nCheck console.", "Save Error")
+                        else:
+                            show_message_dialog("No moves to save.", "Save Error")
                 elif quit_rect and quit_rect.collidepoint(x, y): running_inner = False; return_to_mode_selection = False
                 elif replay_rect and replay_rect.collidepoint(x, y):
                     if move_history: print("Entering Replay Mode..."); replay_mode = True; current_replay_turn = 0; game_over_state = False; showing_stats = False; last_played_highlight_coords = set()
@@ -7336,17 +7696,35 @@ def handle_mouse_down_event(event, state, drawn_rects): # Added drawn_rects para
                                         return updated_state
                                     else: show_message_dialog(f"This is not the highest scoring bingo! Max score is {max_bingo_score}.", "Incorrect Move"); valid_for_practice = False
                                 if valid_for_practice and practice_mode not in ["eight_letter"] and not paused_for_power_tile and not paused_for_bingo_practice:
-                                    next_turn, drawn_tiles, newly_placed, \
-                                    blanks_played_count = play_hint_move( # Reassign blanks_played_count
-                                        selected_move, tiles, racks, blanks, scores, player_who_played, 
-                                        bag, board, 
-                                        board_tile_counts, # Pass the main Counter (modified in-place)
-                                        blanks_played_count_before_luck_hint # Pass the "before" count
+                                    # Call the comprehensive play_hint_move and unpack its 13 return values.
+                                    (tiles, racks[player_who_played-1], blanks, scores[player_who_played-1],
+                                     bag, first_play, consecutive_zero_point_turns, pass_count, exchange_count,
+                                     last_played_highlight_coords, turn, # This 'turn' is the next turn value
+                                     blanks_played_count, # This is the updated game total blanks_played_count
+                                     luck_factor) = play_hint_move( # luck_factor for the move just made
+                                        selected_move,
+                                        tiles, racks[player_who_played-1], blanks,
+                                        scores[player_who_played-1], bag, board,
+                                        first_play, turn, # 'turn' here is the current turn before the move
+                                        move_history, # For appending the move_data
+                                        board_tile_counts, # Pass the Counter object (mutable, updated in-place)
+                                        blanks_played_count # Pass the current game total (int, new total will be returned)
                                     )
-                                    human_played = True; hinting = False; paused_for_power_tile = False; consecutive_zero_point_turns = 0; pass_count = 0; exchange_count = 0; luck_factor = 0.0;
-                                    if drawn_tiles:
-                                        try: luck_factor = calculate_luck_factor_cython(drawn_tiles, move_rack, board_tile_counts, blanks_played_count, get_remaining_tiles); drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Luck (Cython): {luck_factor:+.2f}")
-                                        except Exception as e_luck: print(f"Error calling calculate_luck_factor_cython: {e_luck}"); luck_factor = 0.0
+                                    human_played = True
+                                    hinting = False
+                                    # No specific "solved" state for generic practice plays here,
+                                    # game continues based on standard rules.
+
+                                    # --- MODIFICATION: Remove or adapt usage of 'drawn_tiles' ---
+                                    # The 'if drawn_tiles:' check (around line 7465) caused UnboundLocalError.
+                                    # 'drawn_tiles' is not returned by play_hint_move.
+                                    # We have 'luck_factor' which is calculated based on drawn tiles.
+                                    # If the intention was to print luck:
+                                    if luck_factor != 0.0 or len(selected_move.get('newly_placed', [])) > 0 : # Check if a play was made that could draw tiles
+                                        print(f"  Hint Played in Practice. Luck (Cython): {luck_factor:+.2f}")
+                                if drawn_tiles:
+                                    try: luck_factor = calculate_luck_factor_cython(drawn_tiles, move_rack, board_tile_counts, blanks_played_count, get_remaining_tiles); drawn_tiles_str = "".join(sorted(t if t != ' ' else '?' for t in drawn_tiles)); print(f"  Drew: {drawn_tiles_str}, Luck (Cython): {luck_factor:+.2f}")
+                                    except Exception as e_luck: print(f"Error calling calculate_luck_factor_cython: {e_luck}"); luck_factor = 0.0
                                     move_history.append({'player': player_who_played, 'move_type': 'place', 'rack': move_rack, 'positions': selected_move.get('positions',[]), 'blanks': selected_move.get('blanks',set()), 'score': selected_move.get('score',0), 'word': selected_move.get('word','N/A'), 'drawn': drawn_tiles, 'coord': get_coord(selected_move.get('start',(0,0)), selected_move.get('direction','right')), 'word_with_blanks': selected_move.get('word_with_blanks',''), 'is_bingo': selected_move.get('is_bingo',False), 'turn_duration': 0.0, 'luck_factor': luck_factor});
                                     current_replay_turn = len(move_history); last_played_highlight_coords = set((pos[0], pos[1]) for pos in selected_move.get('positions', [])); turn = next_turn
                             elif is_simulation_result and not selected_move: show_message_dialog("Error retrieving move data from selected simulation result.", "Internal Error")
@@ -8164,93 +8542,74 @@ def update_preview_score(state):
 
 
 
-# Function to Replace: reset_per_game_variables
-# REASON: Remove practice_probability_max_index from reset dictionary.
-
 def reset_per_game_variables():
-    """
-    Resets common UI state, turn counters, and temporary variables
-    to their default values before the start of each game iteration.
-    Removes batch_stop_requested key.
-
-    Returns:
-        dict: A dictionary containing the reset variables and their initial values.
-    """
+    """Returns a dictionary with default values for UI/temporary state variables."""
     # Access constants needed for initialization
     # (Ensure these are accessible, e.g., defined globally)
     # WINDOW_WIDTH, WINDOW_HEIGHT, DIALOG_WIDTH, DIALOG_HEIGHT,
     # DEFAULT_AI_CANDIDATES, DEFAULT_OPPONENT_SIMULATIONS, DEFAULT_POST_SIM_CANDIDATES
-
     reset_values = {
-        'word_positions': [],
-        'running_inner': True,
-        'dropdown_open': False,
-        'return_to_mode_selection': False, # Keep this for explicit user actions
-        'exchanging': False,
-        'hinting': False,
-        'showing_all_words': False,
-        'selected_tiles': set(),
-        'typing': False,
-        'typing_start': None,
-        'typing_direction': None,
-        'current_r': None,
-        'current_c': None,
-        'last_left_click_time': 0,
-        'last_left_click_pos': None,
-        'hint_moves': [],
-        'selected_hint_index': None,
-        'scroll_offset': 0,
-        'last_clicked_pos': None, # Consider removing if truly redundant later
-        'last_word': "",
-        'last_score': 0,
-        'last_start': None,
-        'last_direction': None,
-        'human_played': False,
+        'running_inner': True, # Start the inner loop
+        'game_over_state': False, # Reset game over flag
+        # 'return_to_mode_selection': False, # Keep this for explicit user actions in main
         'dragged_tile': None,
         'drag_pos': None,
         'drag_offset': (0, 0),
+        'dragging': False, # For dialog dragging
         'selected_square': None,
-        'original_tiles': None,
-        'original_rack': None,
-        'previous_turn': 0,
-        'game_over_state': False,
+        'typing': False,
+        'word_positions': [],
+        'original_tiles': None, # Store board state when typing starts
+        'original_rack': None,  # Store rack state when typing starts
+        'typing_start': None,   # Store (r, c) where typing initiated
+        'typing_direction': None, # Store 'right' or 'down'
+        'exchanging': False,
+        'selected_tiles': set(),
+        'hinting': False,
+        'hint_moves': [],
+        'selected_hint_index': None,
+        'showing_all_words': False,
+        'all_words_scroll_offset': 0,
+        'dropdown_open': False,
+        'last_left_click_time': 0,
+        'last_left_click_pos': None,
+        # 'action': None, # Consider removing if truly redundant later
+        'scroll_offset': 0, # For scoreboard
+        # 'scoreboard_height': WINDOW_HEIGHT - 80, # Recalculate based on constant
         'showing_stats': False,
-        'dialog_x': (WINDOW_WIDTH - DIALOG_WIDTH) // 2,
-        'dialog_y': (WINDOW_HEIGHT - DIALOG_HEIGHT) // 2,
-        'dragging': False,
-        'reason': "",
-        'action': None, # Consider removing if truly redundant later
-        'scoreboard_height': WINDOW_HEIGHT - 80, # Recalculate based on constant
-        'paused_for_power_tile': False,
-        'current_power_tile': None,
-        'power_tile_message_shown': False,
-        'preview_score_enabled': False,
-        'current_preview_score': 0,
-        'stats_scroll_offset': 0,
         'stats_dialog_x': (WINDOW_WIDTH - 480) // 2, # Use stats dialog width constant
         'stats_dialog_y': (WINDOW_HEIGHT - 600) // 2, # Use stats dialog height constant
+        'stats_scroll_offset': 0,
         'stats_dialog_dragging': False,
         'stats_dialog_drag_offset': (0, 0),
-        'all_words_scroll_offset': 0,
+        'dialog_x': (WINDOW_WIDTH - DIALOG_WIDTH) // 2, # For game over dialog
+        'dialog_y': (WINDOW_HEIGHT - DIALOG_HEIGHT) // 2,
+        'reason': '', # Game over reason
+        'showing_practice_end_dialog': False,
+        'practice_end_message': "",
+        'practice_solved': False,
+        'paused_for_power_tile': False,
+        'current_power_tile': None,
+        'bingo_practice_message_shown': False, # Should be reset per game
+        'power_tile_message_shown': False,    # Should be reset per game
         'paused_for_bingo_practice': False,
-        'bingo_practice_message_shown': False,
-        'current_turn_pool_quality_score': 0.0,
+        'showing_simulation_config': False,
+        'simulation_config_inputs': [str(DEFAULT_AI_CANDIDATES), str(DEFAULT_OPPONENT_SIMULATIONS), str(DEFAULT_POST_SIM_CANDIDATES)],
+        'simulation_config_active_input': None,
         'specifying_rack': False,
-        'confirming_override': False,
         'specify_rack_inputs': ["", ""],
         'specify_rack_active_input': None,
         'specify_rack_original_racks': [[], []],
         'specify_rack_proposed_racks': [[], []],
-        'showing_simulation_config': False,
-        'simulation_config_inputs': [str(DEFAULT_AI_CANDIDATES), str(DEFAULT_OPPONENT_SIMULATIONS), str(DEFAULT_POST_SIM_CANDIDATES)],
-        'simulation_config_active_input': None,
-        'practice_solved': False,
-        'showing_practice_end_dialog': False,
-        'practice_end_message': "",
-        'restart_practice_mode': False,
-        'drawn_rects': {}
-        # --- REMOVED 'practice_probability_max_index': None ---
-        # REMOVED 'batch_stop_requested'
+        'confirming_override': False,
+        'preview_score_enabled': False,
+        'current_preview_score': 0,
+        'drawn_rects': {}, # Store rects drawn by draw_game_screen
+        'best_exchange_for_hint': None,
+        'best_exchange_score_for_hint': -float('inf'),
+        'restart_practice_mode': False, # <<< ENSURE THIS IS PRESENT
+        'running_main_loop': True, # Flag possibly set by process_events to signal quit
+        'stats_total_content_height': 0 # For stats dialog scrolling calculation
     }
     return reset_values
 
@@ -8385,317 +8744,263 @@ def run_game_loop():
 
 
 # Function to Replace: main (Complete)
-# REASON: Ensure correct tuple unpacking (43 values) is applied.
-
+# REASON: Add restart_practice_mode and return_to_mode_selection to globals and state dict.
 def main(is_initialized): # Accept initialization status as argument
+    """Main game loop for a single game instance or a batch of games."""
     # Declare key modified globals ---
-    # (Keep all existing global declarations)
-    global turn, previous_turn, game_over_state, final_scores, running_inner # Removed batch_stop_requested from globals
-    global return_to_mode_selection, human_played, pass_count, exchange_count, consecutive_zero_point_turns
-    global dropdown_open, exchanging, hinting, showing_all_words, selected_tiles, typing, selected_square
-    global word_positions, original_tiles, original_rack, dragged_tile, drag_pos, dragging, scroll_offset
-    global last_played_highlight_coords, current_replay_turn, showing_stats, dialog_x, dialog_y
-    global paused_for_power_tile, current_power_tile, power_tile_message_shown
-    global practice_solved # Keep this
-    global showing_practice_end_dialog, practice_end_message
-    global bag, last_word, last_score, last_start, last_direction, move_history, replay_mode, game_mode, is_ai, practice_mode, board, tiles, racks, blanks, scores, GADDAG_STRUCTURE
-    global is_loaded_game, replay_initial_shuffled_bag, initial_racks
-    global number_checks
-    global is_solving_endgame
-    global USE_ENDGAME_SOLVER
-    global USE_AI_SIMULATION
+    # Add ALL globals accessed directly or modified within main's scope
+    global turn, previous_turn, game_over_state, final_scores, running_inner
+    global board, tiles, racks, blanks, scores, bag, first_play, game_mode, is_ai
+    global practice_mode, move_history, replay_mode, current_replay_turn
+    global player_names, human_player, last_word, last_score, last_start, last_direction
+    global pass_count, exchange_count, consecutive_zero_point_turns, last_played_highlight_coords
+    global USE_ENDGAME_SOLVER, USE_AI_SIMULATION, DEVELOPER_PROFILE_ENABLED
     global is_batch_running, total_batch_games, current_batch_game_num, batch_results, initial_game_config
-    global stats_scroll_offset, stats_dialog_x, stats_dialog_y, stats_dialog_dragging, stats_dialog_drag_offset
-    global drag_offset
-    global all_words_scroll_offset
-    global paused_for_bingo_practice, bingo_practice_message_shown
-    global current_turn_pool_quality_score
-    global specifying_rack, confirming_override, specify_rack_inputs
-    global specify_rack_active_input, specify_rack_original_racks, specify_rack_proposed_racks
-    # global preview_checkbox_rect # REMOVED global declaration if it exists
-    global preview_score_enabled, current_preview_score # Keep these state vars
-    global all_moves
-    global showing_simulation_config, simulation_config_inputs, simulation_config_active_input
-    global letter_checks
-    global practice_target_moves, practice_best_move
-    global player_names
-    global hint_moves, selected_hint_index
-    global gaddag_loading_status # Keep global declaration
-    global pyperclip_available, pyperclip # Add pyperclip globals
-    global replay_start_rect, replay_prev_rect, replay_next_rect, replay_end_rect
-    global current_r, current_c, typing_direction, typing_start
-    global reason
+    global practice_target_moves, practice_best_move, all_moves
+    global gaddag_loading_status, gaddag_load_thread, GADDAG_STRUCTURE, DAWG
+    global is_solving_endgame, endgame_start_time
+    global board_tile_counts, blanks_played_count
+    global letter_checks, number_checks
+    global practice_probability_max_index
+    global initial_shuffled_bag_order_sgs, initial_racks_sgs # SGS specific
+    global TILE_LETTER_CACHE, SCORE_CACHE # Caches
+    global main_called # Flag from run_game_loop
+    global clock # Pygame clock
+    global is_loaded_game
+    global final_scores
     global restart_practice_mode
-    global last_left_click_time, last_left_click_pos
-    global board_tile_counts
-    global clock
-    global MODE_HVH, MODE_HVA, MODE_AVA
-    global DEVELOPER_PROFILE_ENABLED
-    global practice_probability_max_index # <<< ADDED
-    global blanks_played_count
+    global return_to_mode_selection # <<< ADDED GLOBAL DECLARATION
+    global screen # Need screen global for drawing
 
-    print("--- main() function entered ---")
+    # <<< --- DEBUG PRINT AFTER GLOBALS --- >>>
+    try:
+        print(f"DEBUG main: After global declarations - is_loaded_game type: {type(is_loaded_game)}, value: {is_loaded_game}")
+        print(f"DEBUG main: After global declarations - final_scores type: {type(final_scores)}, value: {final_scores}")
+        print(f"DEBUG main: After global declarations - game_over_state type: {type(game_over_state)}, value: {game_over_state}")
+        print(f"DEBUG main: After global declarations - restart_practice_mode type: {type(restart_practice_mode)}, value: {restart_practice_mode}")
+        print(f"DEBUG main: After global declarations - return_to_mode_selection type: {type(return_to_mode_selection)}, value: {return_to_mode_selection}")
+    except NameError as e:
+        print(f"DEBUG main: NameError immediately after global declarations! Error: {e}")
+    # <<< --- END DEBUG PRINT --- >>>
+
+
+    # For cProfile
     profiler = None # Initialize profiler object for this run
+    main_called_flag = is_initialized # Use the passed flag
 
-    # --- Initialization Block (Runs Once per script execution OR if restarting) ---
-    if not is_initialized:
-        # --- ADD clock initialization ---
+    # --- Initialization Block (Runs Once per script execution OR if restarting via run_game_loop) ---
+    if not main_called_flag: # If main() is being called fresh by run_game_loop
         clock = pygame.time.Clock() # Initialize clock here
-        # --- End clock initialization ---
-        print("--- main(): 'if not is_initialized' block entered ---")
-        print("--- main(): Calling mode_selection_screen()... ---")
+
         selected_mode_result, return_data = mode_selection_screen()
-        print(f"--- main(): mode_selection_screen() returned: mode={selected_mode_result} ---")
+        if selected_mode_result is None: # User quit from mode selection
+            if DEVELOPER_PROFILE_ENABLED and profiler:
+                profiler.disable()
+                if 'is_batch_running' in globals() and is_batch_running and \
+                   'batch_results' in globals() and 'total_batch_games' in globals() and \
+                   batch_results is not None and total_batch_games is not None and \
+                   len(batch_results) < total_batch_games:
+                    if 'initial_game_config' in globals() and initial_game_config is not None and initial_game_config.get('cprofile_enabled', False):
+                        profile_filename = f"{initial_game_config.get('batch_filename_prefix', 'UNKNOWN-BATCH')}_profile.prof"
+                        profiler.dump_stats(profile_filename)
+                        print(f"--- cProfile data saved to {profile_filename} (Batch Incomplete) ---")
+            return False # Signal exit to run_game_loop
 
-        # --- Call the new initialization function ---
-        init_result = initialize_game(selected_mode_result, return_data, False)
-        if init_result is None:
-            print("--- main(): Initialization failed. Exiting. ---")
-            return False # Signal exit
+        init_success = initialize_game(selected_mode_result, return_data, main_called_flag)
 
-        
-        (game_mode, is_loaded_game, player_names, move_history, final_scores,
-         replay_initial_shuffled_bag, board, tiles, scores, blanks, racks, bag,
-         replay_mode, current_replay_turn, practice_mode, is_ai, human_player,
-         first_play, initial_racks, number_checks, USE_ENDGAME_SOLVER,
-         USE_AI_SIMULATION, is_batch_running, total_batch_games,
-         current_batch_game_num, batch_results, initial_game_config,
-         GADDAG_STRUCTURE, practice_target_moves, practice_best_move, all_moves,
-         letter_checks, turn, pass_count, exchange_count, consecutive_zero_point_turns,
-         last_played_highlight_coords, is_solving_endgame, gaddag_loading_status,
-         board_tile_counts, visualize_batch, cprofile_enabled,
-         practice_probability_max_index, blanks_played_count,
-         initial_shuffled_bag_order_sgs, 
-         initial_racks_sgs) = init_result
+        if not init_success:
+            if DEVELOPER_PROFILE_ENABLED and profiler:
+                profiler.disable()
+                if 'is_batch_running' in globals() and is_batch_running:
+                     if 'initial_game_config' in globals() and initial_game_config is not None and initial_game_config.get('cprofile_enabled', False):
+                        profile_filename = f"{initial_game_config.get('batch_filename_prefix', 'UNKNOWN-BATCH')}_profile_INIT_FAIL.prof"
+                        profiler.dump_stats(profile_filename)
+                        print(f"--- cProfile data saved to {profile_filename} (Initialization Failed) ---")
+            return False
 
-        
-    if DEVELOPER_PROFILE_ENABLED:
-        print("--- main(): cProfile ENABLED, starting profiler... ---")
-        profiler = cProfile.Profile()
-        profiler.enable()
+        main_called_flag = True
+        if DEVELOPER_PROFILE_ENABLED and profiler is None:
+            profiler = cProfile.Profile()
+            profiler.enable()
+    # --- End Initialization Block ---
 
-
-    # --- Outer Batch Loop ---
-    batch_stop_requested = False # Initialize here for the outer loop scope
+    batch_stop_requested = False
     num_loops = total_batch_games if is_batch_running else 1
-    # Ensure current_game_initial_racks exists if needed later
-    current_game_initial_racks = [r[:] for r in initial_racks] if 'initial_racks' in locals() and initial_racks is not None else [[], []]
-    current_state = {}
-    return_to_mode_selection = False # Default return value
-    was_batch_running = is_batch_running # Remember if we started in batch mode
+    current_game_initial_racks_sgs_ref = initial_racks_sgs
+    # return_to_mode_selection is now a global, initialized to False at module level
+    # and potentially set to True by process_game_events.
+    # We will use the global one directly for the main return.
+    was_batch_running_at_start = is_batch_running
 
     for game_num in range(1, num_loops + 1):
-        # --- Batch Game Reset Logic ---
+        if batch_stop_requested:
+            print(f"--- Batch run stopping at game {game_num} due to user request or error. ---")
+            break
+
         if is_batch_running:
             current_batch_game_num = game_num
-            if not is_batch_running or visualize_batch: # Only print if visualizing
-                print(f"\n--- Starting Batch Game {current_batch_game_num} of {total_batch_games} ---")
-            if game_num > 1: # Reset state for games after the first
+            if not visualize_batch:
+                if game_num % 10 == 0 or game_num == 1 or game_num == num_loops:
+                   print(f"--- Starting Batch Game {current_batch_game_num} / {total_batch_games} ---")
+            else:
+                print(f"--- Starting Batch Game {current_batch_game_num} / {total_batch_games} (Visualized) ---")
+
+            if game_num > 1:
                 reset_result = reset_game_state(initial_game_config)
-                if reset_result is None: print(f"FATAL: Failed to reset state for game {game_num}. Stopping batch."); batch_stop_requested = True; break # Set flag and break
-                (board, tiles, racks, blanks, scores, turn, first_play, bag, move_history,
-                 pass_count, exchange_count, consecutive_zero_point_turns,
-                 last_played_highlight_coords, is_solving_endgame,
-                 board_tile_counts, blanks_played_count) = reset_result
-                is_ai = initial_game_config.get('is_ai', [False, False]); player_names = initial_game_config.get('player_names', ["P1", "P2"])
-                current_game_initial_racks = [r[:] for r in racks] # Capture new initial racks for this game
-                all_moves = [] # Reset all_moves for new batch game
-                current_replay_turn = 0 # Reset replay turn for new batch game
-                visualize_batch = initial_game_config.get('visualize_batch', False)
-                cprofile_enabled = initial_game_config.get('cprofile_enabled', False) # Retrieve cProfile setting
-        # --- Non-Batch Game Reset Logic (for "Play Again") ---
-        elif is_initialized and not is_batch_running: # This handles "Play Again"
-            reset_result = reset_for_play_again(is_ai, practice_mode)
-            if reset_result is None:
-                print("Error resetting game for Play Again. Exiting.")
-                return False # Signal exit
-            (board, tiles, scores, blanks, bag, racks, initial_racks,
-             current_game_initial_racks, first_play, turn, replay_mode,
-             move_history, pass_count, exchange_count,
-             consecutive_zero_point_turns, last_played_highlight_coords,
-             is_solving_endgame, practice_target_moves,
-             practice_best_move, all_moves, gaddag_loading_status,
-             board_tile_counts, blanks_played_count) = reset_result
-            current_replay_turn = 0
-            visualize_batch = False # Not applicable in non-batch
-            # cprofile_enabled is already set from the initial run
+                if reset_result is None:
+                    print(f"FATAL: Failed to reset state for game {game_num}. Stopping batch.")
+                    batch_stop_requested = True
+                    break
+                current_game_initial_racks_sgs_ref = initial_racks_sgs
+                all_moves = []
+                current_replay_turn = 0
 
-
-        # --- Reset Common Per-Game Variables & Initialize State Dictionary ---
         reset_vars = reset_per_game_variables()
-        # Create the state dictionary for this game iteration
+
         current_state = {
-            # Core Game State (from initialization or reset)
-            'turn': turn, 'game_over_state': False, 'final_scores': None,
+            **reset_vars,
+            'board': board, 'tiles': tiles, 'racks': racks, 'blanks': blanks,
+            'scores': scores, 'final_scores': final_scores, 'turn': turn,
+            'first_play': first_play, 'bag': bag, 'game_mode': game_mode,
+            'is_ai': is_ai, 'practice_mode': practice_mode, 'move_history': move_history,
+            'replay_mode': replay_mode, 'is_loaded_game': is_loaded_game,
+            'current_replay_turn': current_replay_turn, 'player_names': player_names,
+            'human_player': human_player, 'last_word': last_word, 'last_score': last_score,
+            'last_start': last_start, 'last_direction': last_direction,
             'pass_count': pass_count, 'exchange_count': exchange_count,
             'consecutive_zero_point_turns': consecutive_zero_point_turns,
-            'bag': bag, 'move_history': move_history, 'replay_mode': replay_mode,
-            'game_mode': game_mode, 'is_ai': is_ai, 'practice_mode': practice_mode,
-            'board': board, 'tiles': tiles, 'racks': racks, 'blanks': blanks, 'scores': scores,
-            'GADDAG_STRUCTURE': GADDAG_STRUCTURE, 'is_loaded_game': is_loaded_game,
-            'replay_initial_shuffled_bag': replay_initial_shuffled_bag,
-            'initial_racks': initial_racks, 'number_checks': number_checks,
-            'is_solving_endgame': is_solving_endgame, 'USE_ENDGAME_SOLVER': USE_ENDGAME_SOLVER,
-            'USE_AI_SIMULATION': USE_AI_SIMULATION, 'is_batch_running': is_batch_running,
-            'total_batch_games': total_batch_games, 'current_batch_game_num': current_batch_game_num,
-            'batch_results': batch_results, 'initial_game_config': initial_game_config,
-            'letter_checks': letter_checks, 'practice_target_moves': practice_target_moves,
-            'practice_best_move': practice_best_move, 'player_names': player_names,
-            'gaddag_loading_status': gaddag_loading_status, 'first_play': first_play,
             'last_played_highlight_coords': last_played_highlight_coords,
-            'current_game_initial_racks': current_game_initial_racks,
-            'all_moves': all_moves, # Explicitly add all_moves
-            'current_replay_turn': current_replay_turn, # *** Explicitly add current_replay_turn ***
-            'board_tile_counts': board_tile_counts, # Add the counter
-            'visualize_batch': visualize_batch, # Add the setting
-            'cprofile_enabled': cprofile_enabled, # Carry over cProfile setting
-            'practice_probability_max_index': practice_probability_max_index, # <<< ADDED
-            # UI / Temporary State (from reset_vars)
-            **reset_vars, # Unpack the reset dictionary
-            # Add other necessary state not covered by reset_vars
-            'pyperclip_available': pyperclip_available, 'pyperclip': pyperclip,
-            'replay_start_rect': replay_start_rect, 'replay_prev_rect': replay_prev_rect,
-            'replay_next_rect': replay_next_rect, 'replay_end_rect': replay_end_rect,
-            'bag_count': len(bag), # Calculate initial bag count,
+            'USE_ENDGAME_SOLVER': USE_ENDGAME_SOLVER, 'USE_AI_SIMULATION': USE_AI_SIMULATION,
+            'DEVELOPER_PROFILE_ENABLED': DEVELOPER_PROFILE_ENABLED,
+            'is_batch_running': is_batch_running, 'total_batch_games': total_batch_games,
+            'current_batch_game_num': current_batch_game_num, 'batch_results': batch_results,
+            'initial_game_config': initial_game_config, 'practice_target_moves': practice_target_moves,
+            'practice_best_move': practice_best_move, 'all_moves': all_moves,
+            'gaddag_loading_status': gaddag_loading_status, 'GADDAG_STRUCTURE': GADDAG_STRUCTURE,
+            'DAWG': DAWG, 'is_solving_endgame': is_solving_endgame, 'endgame_start_time': endgame_start_time,
+            'board_tile_counts': board_tile_counts, 'blanks_played_count': blanks_played_count,
+            'letter_checks': letter_checks, 'number_checks': number_checks,
+            'practice_probability_max_index': practice_probability_max_index,
             'initial_shuffled_bag_order_sgs': initial_shuffled_bag_order_sgs,
-            'initial_racks_sgs': initial_racks_sgs
+            'initial_racks_sgs': initial_racks_sgs,
+            'current_game_initial_racks': current_game_initial_racks_sgs_ref,
+            'pyperclip_available': pyperclip_available, 'pyperclip': pyperclip,
+            'TILE_LETTER_CACHE': TILE_LETTER_CACHE, 'SCORE_CACHE': SCORE_CACHE,
+            'clock': clock,
+            'game_over_state': game_over_state,
+            'bag_count': len(bag),
+            'previous_turn': 0,
+            'power_tile_message_shown': False,
+            'bingo_practice_message_shown': False,
+            'human_played': False,
+            'return_to_mode_selection': return_to_mode_selection # <<< ADDED HERE
         }
-        #print("--- main(): Initialized current_state dictionary. ---")
-        # --- End Common Variable Resets & State Dictionary Init ---
 
+        current_state['running_inner'] = True
+        while current_state.get('running_inner', False):
+            if batch_stop_requested and is_batch_running and not visualize_batch:
+                current_state['running_inner'] = False
+                continue
 
-        # --- Inner Game Loop ---
-        # Use the running_inner flag from the state dictionary
-        while current_state['running_inner']:
-            if batch_stop_requested:
-                print(f"--- DEBUG: Inner loop start check: batch_stop_requested is TRUE. Breaking inner loop. ---") # DEBUG
-                current_state['running_inner'] = False # Stop inner loop if outer flag is set
-                break
-
-            # --- Deferred 8-Letter Practice Move Generation ---
-            current_state = handle_deferred_practice_init(current_state)
-            if not current_state['running_inner']:
-                print("--- DEBUG: Setting batch_stop_requested = True due to handle_deferred_practice_init failure. ---") # DEBUG
-                batch_stop_requested = True # Ensure outer loop stops if init fails
-                break # Exit if init failed
-
-            # --- Game State Update / Turn Logic ---
-            if current_state['typing'] and current_state['preview_score_enabled']:
-                current_state['current_preview_score'] = update_preview_score(current_state)
-            else:
-                current_state['current_preview_score'] = 0
+            if current_state['practice_mode'] == "eight_letter" and not current_state['practice_best_move'] and gaddag_loading_status == 'loaded':
+                current_state = handle_deferred_practice_init(current_state)
+                if not current_state['practice_best_move'] and not current_state['all_moves']:
+                    batch_stop_requested = True
+                    current_state['running_inner'] = False
+                    continue
 
             current_state = handle_turn_start_updates(current_state)
             current_state = handle_ai_turn_trigger(current_state)
 
-            # --- Add Delay if AI turn skipped due to loading ---
-            if current_state['gaddag_loading_status'] == 'loading' and 0 <= current_state['turn'] - 1 < len(current_state['is_ai']) and current_state['is_ai'][current_state['turn'] - 1]:
-                pygame.time.wait(100) # Wait 100ms to yield CPU
+            if not (is_batch_running and not visualize_batch):
+                if current_state.get('is_ai', [False,False])[current_state.get('turn',1)-1] and \
+                   gaddag_loading_status != 'loaded' and \
+                   not current_state.get('human_played', False):
+                    pygame.time.wait(100)
 
-            # --- Practice Mode Message Display ---
             current_state = handle_practice_messages(current_state)
 
-            # --- Determine if drawing/event processing should happen ---
-            should_process_events_and_draw = True # Default to True
-            if current_state['is_batch_running'] and not current_state['visualize_batch']:
-                should_process_events_and_draw = False # Skip if non-visual batch
+            should_process_events_and_draw = True
+            if is_batch_running and not initial_game_config.get('visualize_batch', False):
+                should_process_events_and_draw = False
 
-            #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            #%%%%%%%%%%%%%%%%%%% EVENT PROCESSING %%%%%%%%%%%%%%%%%%%%%%
-            #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             if should_process_events_and_draw:
-                event_result_state = process_game_events(current_state, current_state['drawn_rects'])
-                current_state.update(event_result_state)
-                # Update local control flags based on the returned state
-                return_to_mode_selection = current_state['return_to_mode_selection']
-                # Update outer flag based on return_to_mode_selection
-                if return_to_mode_selection:
-                    print(f"--- DEBUG: Setting batch_stop_requested = True because return_to_mode_selection is TRUE (event: {pygame.event.event_name(event.type) if 'event' in locals() else 'N/A'}). ---")
-                    batch_stop_requested = True # Set outer flag if user explicitly wants to stop/go back
-                # --- MODIFICATION: Check if Quit was requested ---
-                if not current_state['running_inner'] and not return_to_mode_selection:
-                    # This means Quit was selected, stop the outer batch loop too
-                    print("--- DEBUG: Quit detected in event processing. Setting batch_stop_requested = True. ---")
-                    batch_stop_requested = True
-            #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            #%%%%%%%%%%%%%%%%% END EVENT PROCESSING %%%%%%%%%%%%%%%%%%%%
-            #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                current_state = process_game_events(current_state, current_state.get('drawn_rects', {}))
+                # process_game_events now directly modifies the global return_to_mode_selection if needed
+                # and sets current_state['running_inner'] = False if it needs to stop the inner loop.
 
+                if not current_state.get('running_main_loop', True): # Check if quit was signaled
+                     if DEVELOPER_PROFILE_ENABLED and profiler: profiler.disable()
+                     return False # Propagate quit signal
 
-            # --- Game Over Check ---
+                # If process_game_events decided to stop the inner loop (e.g. user quit, or wants to go to menu)
+                if not current_state.get('running_inner', False):
+                    if current_state.get('return_to_mode_selection', False): # Check if it was to go to menu
+                        batch_stop_requested = True # Stop batch if returning to menu
+                    # If not returning to menu, it means a direct quit, which is handled by running_main_loop check
+
+            # Update globals from current_state dictionary AFTER event processing
+            for key, value in current_state.items():
+                if key in globals():
+                    globals()[key] = value
+
             current_state = check_and_handle_game_over(current_state)
-            # Update local control flag if game ended in batch mode
-            if current_state['game_over_state'] and current_state['is_batch_running']:
+            game_over_state = current_state['game_over_state']
+            if game_over_state:
                 current_state['running_inner'] = False
 
-
-            # --- Practice Mode Restart Logic ---
-            if not current_state['is_batch_running']:
+            if restart_practice_mode:
                 current_state = handle_practice_restart(current_state)
-                # If restart failed, it sets running_inner=False and return_to_mode_selection=True
-                if not current_state['running_inner'] and current_state['return_to_mode_selection']:
-                    batch_stop_requested = True # Also stop outer loop if practice restart fails
+                for key, value in current_state.items():
+                    if key in globals(): globals()[key] = value
+                restart_practice_mode = False
+                current_state['restart_practice_mode'] = False
 
+                if not current_state.get('running_inner', True):
+                    batch_stop_requested = True
+                    # return_to_mode_selection is already global and would be set by handle_practice_restart if needed
 
-            #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            #%%%%%%%%%%%%%%%%%%%%% DRAWING CALL %%%%%%%%%%%%%%%%%%%%%%%%
-            #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            if should_process_events_and_draw: # Use the same flag
+            if should_process_events_and_draw:
                 current_state['drawn_rects'] = draw_game_screen(screen, current_state)
                 pygame.display.flip()
-            #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-            #%%%%%%%%%%%%%%%%%%% END DRAWING CALL %%%%%%%%%%%%%%%%%%%%%%
-            #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-            # --- Clock Tick (Conditional) ---
-            if not current_state['is_batch_running'] and current_state['game_mode'] != MODE_AVA:
-                clock.tick(60) # Limit frame rate only if interactive and not AI vs AI
-            # --- End Clock Tick ---
-
-
+            if should_process_events_and_draw:
+                if not (is_batch_running and not visualize_batch and is_ai[0] and is_ai[1]):
+                    clock.tick(60)
         # --- End of Inner Game Loop ---
 
-        if not is_batch_running:
-            print(f"--- DEBUG: End of outer loop iteration for game {game_num}. batch_stop_requested = {batch_stop_requested} ---")
-
-        if batch_stop_requested:
-            if not is_batch_running: print("--- Batch run stopping due to user request or error ---")
+        # Check the global return_to_mode_selection flag here
+        if return_to_mode_selection:
             break
 
     # --- End of Outer Batch Loop ---
 
-    # --- Save batch stats after loop finishes ---
-    if was_batch_running and current_state and current_state.get('batch_results'):
-        batch_summary_filename = f"{current_state.get('initial_game_config', {}).get('batch_filename_prefix', 'UNKNOWN-BATCH')}.txt"
-        save_batch_statistics(current_state['batch_results'], current_state.get('player_names', ["P1","P2"]), batch_summary_filename)
-        # Set return_to_mode_selection to True after batch save
-        return_to_mode_selection = True # Ensure we go back to menu
+    if was_batch_running_at_start and batch_results:
+        batch_summary_filename = f"{initial_game_config.get('batch_filename_prefix', 'UNKNOWN-BATCH')}.txt"
+        save_batch_statistics(batch_results, initial_game_config.get('player_names', ["P1","P2"]), batch_summary_filename)
+        print(f"--- Batch statistics saved to {batch_summary_filename} ---")
 
-    # --- Profiler Stop & Results (Conditional) ---
-    if profiler:
+    if DEVELOPER_PROFILE_ENABLED and profiler:
         profiler.disable()
-        print("\n--- main(): cProfile STOPPED. Processing results... ---")
         profile_filename = 'scrabble_profile.prof'
+        if was_batch_running_at_start:
+            profile_filename = f"{initial_game_config.get('batch_filename_prefix', 'UNKNOWN-BATCH')}_profile.prof"
         profiler.dump_stats(profile_filename)
-        print(f"--- Profiling Complete: Data saved to {profile_filename} ---")
-        print("\nTo visualize the results, install snakeviz (`pip install snakeviz`)")
-        print(f"Then run the following command in your terminal:")
-        print(f"  snakeviz {profile_filename}")
-        # Optional: Print basic stats to console
-        print("\n--- Basic Profile Stats ---")
+        print(f"--- cProfile data saved to {profile_filename} ---")
         try:
+            import pstats
             p = pstats.Stats(profile_filename)
-            p.strip_dirs().sort_stats('cumulative').print_stats(20) # Print top 20 cumulative time functions
-        except FileNotFoundError:
-            print(f"Error: Profile file '{profile_filename}' not found.")
-        except Exception as e:
-            print(f"Error processing profile stats: {e}")
-    # --- End Profiler Stop ---
+            p.strip_dirs().sort_stats('cumulative').print_stats(20)
+        except ImportError:
+            print("--- pstats module not found, cannot print profiler stats to console. ---")
+        except Exception as e_pstats:
+            print(f"--- Error printing profiler stats: {e_pstats} ---")
 
-    print("--- main(): Exited main game loop(s). ---")
-
-    # Return flag indicating whether to restart (True) or quit (False)
-    return return_to_mode_selection
+    # Use the global return_to_mode_selection for the final decision
+    if return_to_mode_selection:
+        return True
+    else:
+        return False
 
 
 
