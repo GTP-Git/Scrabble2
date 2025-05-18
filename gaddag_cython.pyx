@@ -1,6 +1,6 @@
 
 
-#Scrabble 01MAY25 Cython V5
+#Scrabble 06MAY25 Cython V5
 
 # gaddag_cython.pyx
 # cython: language_level=3
@@ -327,27 +327,26 @@ cpdef list standard_evaluation_cython(list all_moves):
 
 
 
+# In gaddag_cython.pyx
+
 @cython.locals(best_play_raw_score=float, current_play_eval=float)
 cpdef tuple ai_turn_logic_cython(
     list all_moves,
     list current_rack,
-    object board_tile_counts_obj, # Pass Counter as object
-    int blanks_played_count,
+    # MODIFIED: Accept tiles_grid and blanks_set for exchange logic
+    object py_tiles_grid_for_exchange,
+    object py_blanks_set_for_exchange,
+    # END MODIFICATION
+    int blanks_played_count, # This is the game total
     int bag_count,
-    object get_remaining_tiles_func, # Pass Python function as object
-    object find_best_exchange_option_func, # Pass Python function as object
+    object get_remaining_tiles_func, # Passed through for get_expected_draw_value_cython
+    object find_best_exchange_option_func, # Python helper find_best_exchange_option
     float EXCHANGE_PREFERENCE_THRESHOLD,
     float MIN_SCORE_TO_AVOID_EXCHANGE
     ):
     """
     Performs standard evaluation and decides between play, exchange, or pass.
     Calls standard_evaluation_cython and Python helper functions passed as arguments.
-    Passes board_tile_counts and blanks_played_count to find_best_exchange_option_func.
-
-    Returns:
-        tuple: (action_chosen_str, best_move_data)
-               where best_move_data is either the best move dict or the list of tiles to exchange.
-               Returns ('pass', None) if no action is chosen.
     """
     cdef list evaluated_play_options = []
     cdef dict best_play_move = None
@@ -355,32 +354,39 @@ cpdef tuple ai_turn_logic_cython(
     cdef list best_exchange_tiles = []
     cdef float best_exchange_evaluation = -float('inf')
     cdef bint can_play = False
-    cdef bint can_exchange_proactively = (bag_count >= 1)
+    cdef bint can_exchange_proactively = (bag_count >= 1) # Min tiles needed in bag to consider exchange
     cdef str action_chosen = 'pass'
-    cdef dict remaining_dict_for_exchange # No longer needed here
     cdef tuple exchange_result
+    # For holding results from Python helper
+    cdef object best_exchange_tiles_obj
+    cdef object best_exchange_evaluation_obj
 
     # --- Evaluate Play Options ---
     can_play = bool(all_moves)
     if can_play:
-        evaluated_play_options = standard_evaluation_cython(all_moves)
+        evaluated_play_options = standard_evaluation_cython(all_moves) # This uses evaluate_single_move_cython
         if evaluated_play_options:
             best_play_evaluation = evaluated_play_options[0]['final_score']
             best_play_move = evaluated_play_options[0]['move']
-        else:
+        else: # Should not happen if all_moves is not empty, but defensive
             can_play = False
             best_play_move = None
             best_play_evaluation = -float('inf')
 
     # --- Evaluate Exchange Option ---
+    # Consider exchange if no good plays or if proactive exchange is an option
     if not can_play or can_exchange_proactively:
         try:
+            # MODIFIED: Pass tiles_grid and blanks_set to the Python helper
             exchange_result = find_best_exchange_option_func(
                 current_rack,
-                board_tile_counts_obj, # Pass board counts object
-                blanks_played_count,   # Pass blanks played count
+                py_tiles_grid_for_exchange, # Pass tiles grid object
+                py_blanks_set_for_exchange,   # Pass blanks set object
+                blanks_played_count,       # Pass game total blanks played count
                 bag_count
+                # get_remaining_tiles_func is implicitly used by find_best_exchange_option via get_expected_draw_value_cython
             )
+            # END MODIFICATION
 
             if isinstance(exchange_result, tuple) and len(exchange_result) == 2:
                 best_exchange_tiles_obj, best_exchange_evaluation_obj = exchange_result
@@ -389,9 +395,9 @@ cpdef tuple ai_turn_logic_cython(
                 try:
                     best_exchange_evaluation = float(best_exchange_evaluation_obj)
                 except (TypeError, ValueError):
-                    best_exchange_evaluation = -float('inf')
+                    best_exchange_evaluation = -float('inf') # Default if conversion fails
             else:
-                 print("Warning: find_best_exchange_option returned unexpected type.")
+                 # print("Warning: find_best_exchange_option returned unexpected type.")
                  best_exchange_tiles = []
                  best_exchange_evaluation = -float('inf')
 
@@ -407,15 +413,16 @@ cpdef tuple ai_turn_logic_cython(
 
         if best_play_raw_score >= MIN_SCORE_TO_AVOID_EXCHANGE:
             action_chosen = 'play'
-        else:
-            action_chosen = 'play'
-            if best_exchange_tiles:
-                current_play_eval = best_play_evaluation
+        else: # Raw score is low, compare play evaluation with exchange evaluation
+            action_chosen = 'play' # Default to play if exchange isn't better
+            if best_exchange_tiles: # Only consider exchange if a valid one was found
+                current_play_eval = best_play_evaluation # This is already (raw_score + leave_value)
+                # Compare combined play value with exchange value
                 if best_exchange_evaluation > current_play_eval + EXCHANGE_PREFERENCE_THRESHOLD:
                     action_chosen = 'exchange'
-    elif best_exchange_tiles:
+    elif best_exchange_tiles: # No plays, but can exchange
          action_chosen = 'exchange'
-    else:
+    else: # No plays, no viable exchange
         action_chosen = 'pass'
 
     # --- Return chosen action and relevant data ---
@@ -894,16 +901,18 @@ cpdef float evaluate_leave_cython(list rack, bint verbose=False):
 cpdef float calculate_luck_factor_cython(
     list drawn_tiles,
     list move_rack_before,
-    object board_tile_counts_obj, # Pass Counter as object
-    int blanks_played_count,
+    # MODIFIED: Replace board_tile_counts_obj with py_tiles_grid and py_blanks_set
+    object py_tiles_grid,      # Pass the actual tiles grid (list of lists)
+    object py_blanks_set,      # Pass the actual blanks set (set of tuples)
+    # END MODIFICATION
+    int blanks_played_count,    # This is the game total blanks played
     object get_remaining_tiles_func # Pass Python function as object
     ):
     """
     Calculates the luck factor for a set of drawn tiles.
-    Calls evaluate_leave_cython and replicates analyze_unseen_pool logic.
+    Calls evaluate_leave_cython.
     Calls the passed Python get_remaining_tiles function.
     """
-    # These are declared with cdef
     cdef float drawn_leave_value = 0.0
     cdef dict remaining_dict
     cdef float expected_value_sum = 0.0
@@ -913,53 +922,46 @@ cpdef float calculate_luck_factor_cython(
     cdef float expected_single_draw_value = 0.0
     cdef float expected_draw_value_total = 0.0
     cdef float luck_factor = 0.0
-    # Loop variables declared with cdef
     cdef str tile
     cdef int count
 
     if not drawn_tiles:
-        return 0.0 # No luck factor if no tiles were drawn
+        return 0.0
 
-    # 1. Calculate the actual leave value of the drawn tiles
     drawn_leave_value = evaluate_leave_cython(drawn_tiles)
 
-    # 2. Calculate the expected leave value before the draw
     try:
-        # Call the passed Python function to get remaining tiles before draw
-        remaining_dict = get_remaining_tiles_func(move_rack_before, board_tile_counts_obj, blanks_played_count)
+        # MODIFIED: Call get_remaining_tiles_func with the correct arguments
+        remaining_dict = get_remaining_tiles_func(
+            move_rack_before,
+            py_tiles_grid,       # Pass the tiles grid
+            py_blanks_set,       # Pass the blanks set
+            blanks_played_count  # Pass the total blanks played count for the game
+        )
+        # END MODIFICATION
 
-        # Replicate analyze_unseen_pool logic here
         total_unseen_tiles = sum(remaining_dict.values())
         expected_value_sum = 0.0
 
         if total_unseen_tiles > 0:
-            # Iterate through the remaining tiles dictionary
-            for tile, count in remaining_dict.items(): # Use cdef'd tile and count
+            for tile, count in remaining_dict.items():
                 if count <= 0:
                     continue
                 if not isinstance(tile, str):
                     continue
-
-                # Get single tile leave value using evaluate_leave_cython
                 try:
                     single_tile_value = evaluate_leave_cython([tile])
                 except Exception as e_eval:
-                    # print(f"Warning (Cython luck): Could not evaluate single tile '{tile}': {e_eval}")
                     single_tile_value = 0.0
-
                 probability = <float>count / total_unseen_tiles
                 expected_value_sum += single_tile_value * probability
-
         expected_single_draw_value = expected_value_sum
-
     except Exception as e_pool:
-        print(f"Error calculating expected value in Cython luck factor: {e_pool}")
+        print(f"Error calculating expected value in Cython luck factor: {e_pool}") # This might print the 'int not subscriptable'
         expected_single_draw_value = 0.0
 
-    # 3. Calculate total expected value and luck factor
     expected_draw_value_total = expected_single_draw_value * len(drawn_tiles)
     luck_factor = drawn_leave_value - expected_draw_value_total
-
     return luck_factor
 
 
@@ -968,9 +970,12 @@ cpdef float calculate_luck_factor_cython(
 
 
 cpdef float get_expected_draw_value_cython(
-    list current_rack,            # Need rack to calculate remaining
-    object board_tile_counts_obj, # Pass Counter as object
-    int blanks_played_count,
+    list current_rack,
+    # MODIFIED: Replace board_tile_counts_obj with py_tiles_grid and py_blanks_set
+    object py_tiles_grid,      # Pass the actual tiles grid (list of lists)
+    object py_blanks_set,      # Pass the actual blanks set (set of tuples)
+    # END MODIFICATION
+    int blanks_played_count,    # This is the game total blanks played
     object get_remaining_tiles_func # Pass Python function as object
     ):
     """
@@ -987,8 +992,14 @@ cpdef float get_expected_draw_value_cython(
     cdef int count
 
     try:
-        # Call the passed Python function to get remaining tiles
-        remaining_dict = get_remaining_tiles_func(current_rack, board_tile_counts_obj, blanks_played_count)
+        # MODIFIED: Call get_remaining_tiles_func with the correct arguments
+        remaining_dict = get_remaining_tiles_func(
+            current_rack,
+            py_tiles_grid,       # Pass the tiles grid
+            py_blanks_set,       # Pass the blanks set
+            blanks_played_count  # Pass the total blanks played count for the game
+        )
+        # END MODIFICATION
 
         total_unseen_tiles = sum(remaining_dict.values())
 
@@ -1001,17 +1012,13 @@ cpdef float get_expected_draw_value_cython(
                 try:
                     single_tile_value = evaluate_leave_cython([tile])
                 except Exception as e_eval:
-                    # print(f"Warning (Cython expected val): Could not evaluate single tile '{tile}': {e_eval}")
                     single_tile_value = 0.0
-
                 probability = <float>count / total_unseen_tiles
                 expected_value_sum += single_tile_value * probability
-
-        return expected_value_sum # Return the calculated expected value
-
+        return expected_value_sum
     except Exception as e_pool:
-        print(f"Error calculating expected value in Cython: {e_pool}")
-        return 0.0 # Return default on error
+        print(f"Error calculating expected value in Cython (get_expected_draw_value): {e_pool}")
+        return 0.0
 
 
 
